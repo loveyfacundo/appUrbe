@@ -1,0 +1,304 @@
+openapi: 3.0.3
+info:
+  title: AppUrbe API
+  version: 1.0.0
+  description: |
+    Contrato público para solicitar y operar viajes, reservas y pagos.
+    Todas las fechas usan RFC 3339 y todos los identificadores son UUID.
+servers:
+  - url: https://api.appurbe.example.com
+    description: Producción (placeholder)
+  - url: http://localhost:3000
+    description: Desarrollo local
+tags:
+  - name: Viajes
+  - name: Reservas
+  - name: Pagos
+paths:
+  /api/v1/viajes:
+    post:
+      tags: [Viajes]
+      summary: Solicitar un viaje
+      operationId: solicitarViaje
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TripRequest' }
+            example:
+              origin: { latitude: -34.6037, longitude: -58.3816, address: "Obelisco, CABA" }
+              destination: { latitude: -34.6158, longitude: -58.4333, address: "Palermo, CABA" }
+              scheduledAt: null
+      responses:
+        '201':
+          description: Viaje creado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Trip' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '500': { $ref: '#/components/responses/ServerError' }
+      x-authorization: El usuario autenticado solo puede solicitar viajes para sí mismo.
+      x-idempotency: Obligatoria. La misma clave y el mismo usuario devuelve la primera respuesta durante 24 horas.
+  /api/v1/viajes/{tripId}:
+    get:
+      tags: [Viajes]
+      summary: Consultar un viaje
+      operationId: obtenerViaje
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Estado actual del viaje.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Trip' }
+              example:
+                id: "7d9f9e3e-4d4d-4c64-bc37-32f3d9b1ce4a"
+                passengerId: "5a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765"
+                driverId: null
+                origin: { latitude: -34.6037, longitude: -58.3816, address: "Obelisco, CABA" }
+                destination: { latitude: -34.6158, longitude: -58.4333, address: "Palermo, CABA" }
+                status: REQUESTED
+                scheduledAt: null
+                createdAt: "2026-11-02T21:00:00.000Z"
+                updatedAt: "2026-11-02T21:00:00.000Z"
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+      x-authorization: El pasajero, el conductor asignado y operadores autorizados pueden consultar el viaje.
+  /api/v1/viajes/{tripId}/cancelacion:
+    post:
+      tags: [Viajes]
+      summary: Cancelar un viaje
+      operationId: cancelarViaje
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CancelTripRequest' }
+            example: { reason: "El pasajero cambió de planes" }
+      responses:
+        '200':
+          description: Viaje cancelado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Trip' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '500': { $ref: '#/components/responses/ServerError' }
+      x-authorization: El pasajero o un operador con permiso trips:cancel puede cancelar.
+      x-idempotency: Obligatoria. No se cobra dos veces por reintentos.
+  /api/v1/reservas:
+    post:
+      tags: [Reservas]
+      summary: Crear una reserva
+      operationId: crearReserva
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReservationRequest' }
+            example:
+              tripId: "7d9f9e3e-4d4d-4c64-bc37-32f3d9b1ce4a"
+              seats: 1
+      responses:
+        '201':
+          description: Reserva creada.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Reservation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '500': { $ref: '#/components/responses/ServerError' }
+      x-authorization: El pasajero autenticado puede crear reservas para sí mismo.
+      x-idempotency: Obligatoria para evitar reservas duplicadas.
+  /api/v1/pagos:
+    post:
+      tags: [Pagos]
+      summary: Solicitar un pago
+      operationId: solicitarPago
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PaymentRequest' }
+            example:
+              tripId: "7d9f9e3e-4d4d-4c64-bc37-32f3d9b1ce4a"
+              amount: 1250
+              currency: ARS
+              paymentMethodToken: "pm_tok_demo"
+      responses:
+        '202':
+          description: Pago aceptado para procesamiento asíncrono.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '500': { $ref: '#/components/responses/ServerError' }
+      x-authorization: Solo el pasajero propietario del viaje o pagos autorizados.
+      x-idempotency: Obligatoria. La clave se conserva al menos 24 horas por usuario y pago.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT emitido por el servicio de identidad. Debe incluir sub y roles.
+  parameters:
+    CorrelationId:
+      name: X-Correlation-Id
+      in: header
+      required: true
+      description: UUID que se propaga a logs, respuestas y eventos.
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: UUID único por operación y usuario.
+      schema: { type: string, format: uuid }
+    TripId:
+      name: tripId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    Coordinates:
+      type: object
+      required: [latitude, longitude, address]
+      properties:
+        latitude: { type: number, format: double, minimum: -90, maximum: 90 }
+        longitude: { type: number, format: double, minimum: -180, maximum: 180 }
+        address: { type: string, minLength: 3, maxLength: 200 }
+    TripRequest:
+      type: object
+      required: [origin, destination]
+      additionalProperties: false
+      properties:
+        origin: { $ref: '#/components/schemas/Coordinates' }
+        destination: { $ref: '#/components/schemas/Coordinates' }
+        scheduledAt: { type: string, format: date-time, nullable: true }
+    CancelTripRequest:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason: { type: string, minLength: 3, maxLength: 500 }
+    Trip:
+      type: object
+      required: [id, passengerId, origin, destination, status, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        passengerId: { type: string, format: uuid }
+        driverId: { type: string, format: uuid, nullable: true }
+        origin: { $ref: '#/components/schemas/Coordinates' }
+        destination: { $ref: '#/components/schemas/Coordinates' }
+        status:
+          type: string
+          enum: [REQUESTED, ASSIGNED, STARTED, COMPLETED, CANCELLED]
+        scheduledAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ReservationRequest:
+      type: object
+      required: [tripId, seats]
+      additionalProperties: false
+      properties:
+        tripId: { type: string, format: uuid }
+        seats: { type: integer, minimum: 1, maximum: 6 }
+    Reservation:
+      type: object
+      required: [id, tripId, passengerId, seats, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        tripId: { type: string, format: uuid }
+        passengerId: { type: string, format: uuid }
+        seats: { type: integer, minimum: 1 }
+        status: { type: string, enum: [CREATED, ACTIVE, CANCELLED] }
+        createdAt: { type: string, format: date-time }
+    PaymentRequest:
+      type: object
+      required: [tripId, amount, currency, paymentMethodToken]
+      additionalProperties: false
+      properties:
+        tripId: { type: string, format: uuid }
+        amount: { type: integer, minimum: 1, description: Monto en unidad mínima de la moneda }
+        currency: { type: string, enum: [ARS] }
+        paymentMethodToken: { type: string, minLength: 8, maxLength: 200 }
+    Payment:
+      type: object
+      required: [id, tripId, amount, currency, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        tripId: { type: string, format: uuid }
+        amount: { type: integer, minimum: 1 }
+        currency: { type: string, enum: [ARS] }
+        status: { type: string, enum: [PENDING, CAPTURED, FAILED] }
+        createdAt: { type: string, format: date-time }
+    Error:
+      type: object
+      required: [code, message, correlationId]
+      properties:
+        code: { type: string, example: VALIDATION_ERROR }
+        message: { type: string }
+        correlationId: { type: string, format: uuid }
+        details: { type: array, items: { type: object, additionalProperties: true } }
+  responses:
+    BadRequest:
+      description: Request malformado.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Unauthorized:
+      description: Token ausente o inválido.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Forbidden:
+      description: El usuario no tiene permisos.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    NotFound:
+      description: Recurso inexistente.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Conflict:
+      description: Estado incompatible o idempotencia reutilizada con otro request.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    ValidationError:
+      description: Datos que no cumplen el esquema.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    ServerError:
+      description: Error inesperado; no expone detalles internos.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

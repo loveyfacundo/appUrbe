@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appurbe.example.com/schemas/DriverAssigned.v1.json",
+  "title": "DriverAssigned",
+  "type": "object",
+  "required": ["tripId", "driverId"],
+  "properties": {
+    "tripId": { "type": "string", "format": "uuid" },
+    "driverId": { "type": "string", "format": "uuid" }
+  },
+  "additionalProperties": false
+}

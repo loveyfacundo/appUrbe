@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://appurbe.example.com/schemas/TripStarted.v1.json","title":"TripStarted","type":"object","required":["tripId","startedAt"],"properties":{"tripId":{"type":"string","format":"uuid"},"startedAt":{"type":"string","format":"date-time"}},"additionalProperties":false}

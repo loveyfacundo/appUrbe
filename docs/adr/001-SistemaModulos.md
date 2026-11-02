@@ -6,29 +6,27 @@
 
 ## Contexto
 
-El backend de AppUrbe se ejecutará con Node.js 22 y Express. El repositorio
-actual ya utiliza CommonJS:
+AppUrbe es un trabajo práctico realizado por dos estudiantes. El objetivo
+principal es construir y poder defender un backend con Node.js y Express que 
+cumpla los requisitos de la materia: contratos REST, persistencia, pruebas, 
+contenedores, seguridad, concurrencia e integración con servicios auxiliares.
 
-```json
-{
-  "type": "commonjs"
-}
-```
+Ambos integrantes tenemos un poco más de experiencia trabajando con CommonJS
+que con ESM. Por ese motivo, queremos aprovechar la familiaridad que ya
+tenemos con su sintaxis y la simplicidad de su configuración para concentrar
+el tiempo del proyecto en el dominio, las APIs, las pruebas y la
+infraestructura.
 
-Y el servidor inicial importa Express de la siguiente manera:
+El proyecto tendrá varios módulos, adaptadores de persistencia, consumidores y
+publicadores de mensajes, pruebas y servicios auxiliares. Por eso necesitamos
+elegir una única convención que sea fácil de aplicar, revisar y explicar
+durante la defensa.
 
-```js
-const express = require('express');
-```
-
-El proyecto crecerá hasta tener varios módulos, adaptadores de persistencia,
-consumidores y publicadores de mensajes, pruebas y servicios auxiliares. Por
-eso es necesario elegir un único sistema de módulos antes de comenzar a
-reorganizar el código.
-
-Además, el enunciado exige Express y establece que la estructura debe ser una
-decisión del grupo. No se debe incorporar un framework que imponga una
-arquitectura por encima de Express.
+ESM también es una alternativa válida y más moderna, pero incorporarlo
+implicaría que los dos integrantes aprendamos reglas y configuraciones nuevas
+al mismo tiempo que desarrollamos el sistema. Para el alcance académico del
+proyecto, consideramos más conveniente priorizar una opción que ya conocemos
+y que nos permita avanzar con menor complejidad accidental.
 
 ## Opciones consideradas
 
@@ -36,92 +34,81 @@ arquitectura por encima de Express.
 
 **Ventajas:**
 
-- Ambos integrantes tenemos más práctica con `require` y `module.exports`, por
-  lo que podemos concentrarnos en entender el dominio y los requisitos del
-  TP, en lugar de dedicar tiempo a aprender otro sistema de módulos.
-- Permite reutilizar directamente el código inicial del proyecto y los
-  ejemplos que ya probamos.
-- Reduce los cambios de configuración en una etapa en la que todavía estamos
-  aprendiendo a organizar el backend.
-- Es más sencillo de explicar y depurar para nuestro nivel actual, especialmente
-  cuando una dependencia no se encuentra o una ruta está mal importada.
-- Facilita que ambos integrantes puedan revisar y modificar el código del
-  otro sin tener que interpretar dos formas distintas de exportar módulos.
-- Reduce el riesgo de perder tiempo resolviendo problemas de configuración de
-  ESM que no están relacionados con los objetivos principales del trabajo.
+- Ambos integrantes tenemos más práctica con `require` y `module.exports`.
+  Podemos usar esa experiencia para concentrarnos en el dominio y los
+  requisitos del TP.
+- Permite comenzar el desarrollo con una configuración sencilla, sin
+  convertir la primera etapa en una migración de configuración.
+- Es suficiente para separar el código en dominio, casos de uso,
+  infraestructura y pruebas.
+- Hace más sencilla la colaboración porque los dos vamos a leer y escribir
+  imports y exports con la misma sintaxis.
+- Si aparece un error de importación, tenemos más posibilidades de resolverlo
+  con los conocimientos que ya tenemos.
+- Reduce el riesgo de que una dificultad de configuración retrase el trabajo
+  de persistencia, mensajería o pruebas.
 
 **Desventajas:**
 
-- Es una tecnología que debemos conocer, pero no es la opción más moderna del
-  ecosistema JavaScript.
-- Algunos tutoriales, ejemplos y paquetes actuales utilizan ESM, por lo que
-  tendremos que adaptar ocasionalmente la sintaxis.
+- No es la opción más moderna del ecosistema JavaScript.
+- Algunos tutoriales y ejemplos actuales utilizan ESM, por lo que tendremos
+  que adaptar ocasionalmente la sintaxis.
 - Si en el futuro quisiéramos migrar a ESM, deberíamos modificar imports,
   exports, pruebas y configuración.
-- La elección no nos permite practicar ESM en este proyecto, aunque podemos
-  estudiarlo en ejercicios separados.
-- Debemos prestar atención al formato de exportación para evitar confundir
-  `module.exports` con las variantes de `exports`.
+- Debemos mantener una convención clara para no confundir `module.exports` con
+  las distintas formas de usar `exports`.
 
 ### Opción B: ESM
 
 **Ventajas:**
 
-- Es el sistema de módulos estándar de los proyectos modernos de JavaScript y
-  nos permitiría aprender una herramienta vigente.
-- La sintaxis `import` y `export` resulta clara cuando se trabaja con
-  exportaciones nombradas y módulos bien separados.
-- Muchos ejemplos recientes de Node.js utilizan ESM, lo que podría facilitar
-  encontrar material actualizado para algunas dudas.
-- Si el proyecto comenzara desde cero y ya tuviéramos experiencia suficiente,
+- Es el sistema de módulos estándar de los proyectos modernos de JavaScript.
+- La sintaxis `import` y `export` es clara cuando todos los archivos siguen la
+  misma convención.
+- Muchos ejemplos recientes de Node.js utilizan ESM, por lo que podríamos
+  encontrar material actualizado.
+- Si comenzáramos desde cero y ambos tuviéramos experiencia suficiente,
   evitaría una migración posterior.
 
 **Desventajas:**
 
-- Tendríamos que dedicar tiempo a aprender sus reglas mientras también
-  desarrollamos el dominio, las APIs, las pruebas y la infraestructura.
-- Los imports locales requieren escribir correctamente las extensiones `.js`,
-  algo que puede generar errores durante el desarrollo inicial.
+- Tendríamos que aprender sus reglas al mismo tiempo que desarrollamos el
+  dominio, las APIs, las pruebas y la infraestructura.
 - Habría que cambiar la configuración existente y adaptar el código inicial.
-- La configuración de algunas pruebas, mocks o herramientas puede requerir
-  más investigación por parte del equipo.
-- Si encontramos un ejemplo basado en CommonJS, no podríamos copiarlo
-  directamente sin entender primero cómo adaptarlo.
-- Para un proyecto académico con tiempo limitado, el beneficio de aprender ESM
-  no compensa el riesgo de agregar problemas de configuración ajenos al
-  objetivo principal del TP.
+- Los imports locales requieren escribir correctamente las extensiones `.js`,
+  lo que puede generar errores durante el desarrollo.
+- Algunas pruebas, mocks o herramientas podrían requerir una configuración
+  distinta a la que ya conocemos.
+- Los ejemplos basados en CommonJS necesitarían una adaptación antes de poder
+  utilizarlos.
+- Para el alcance del TP, el beneficio de cambiar de sintaxis no compensa el
+  tiempo y el riesgo adicional.
 
 ### Opción C: mezclar CommonJS y ESM
 
 **Ventajas:**
 
-- Podría permitir reutilizar temporalmente un ejemplo o dependencia escrita
-  con el otro sistema.
-- Daría la posibilidad de migrar partes del proyecto de manera gradual.
+- Permitiría reutilizar temporalmente un ejemplo o dependencia escrita con el
+  otro sistema.
+- Podría servir para una migración gradual en un proyecto que realmente
+  necesitara cambiar de tecnología.
 
 **Desventajas:**
 
-- Para dos estudiantes que todavía estamos consolidando la estructura del
-  backend, aumenta la cantidad de conceptos que debemos dominar y mantener.
-- Puede provocar errores de interoperabilidad que son difíciles de distinguir
-  de errores propios de la aplicación.
-- Las pruebas podrían comportarse de forma diferente al servidor si cada
-  herramienta interpreta los módulos de manera distinta.
-- Complicaría la ejecución en Docker y la explicación individual durante la
-  defensa.
-- La posible migración gradual no es necesaria para el tamaño actual del
-  proyecto y no justifica la complejidad adicional.
+- Para dos estudiantes que todavía estamos organizando la estructura del
+  backend, aumenta la cantidad de conceptos que debemos dominar.
+- Puede provocar errores de interoperabilidad difíciles de distinguir de los
+  errores propios de la aplicación.
+- Las pruebas podrían comportarse de forma diferente al servidor.
+- Complicaría la ejecución en Docker y la explicación durante la defensa.
+- La migración gradual no es necesaria para el tamaño actual del proyecto.
 
 ## Decisión
 
-Usaremos **CommonJS** en todo el backend:
+Usaremos **CommonJS** en todo el backend:  Node.js 22 + Express + JavaScript + CommonJS
 
-```text
-Node.js 22 + Express + JavaScript + CommonJS
-```
 
-Mantendremos `"type": "commonjs"` en `package.json` y no mezclaremos
-CommonJS con ESM dentro del mismo proyecto.
+Mantendremos CommonJS y no lo mezclaremos con ESM dentro del mismo proyecto.
 
 Los módulos seguirán la siguiente convención:
 

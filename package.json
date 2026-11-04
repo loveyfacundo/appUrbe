@@ -8,7 +8,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test servicios/viajes/tests/viaje.test.js servicios/viajes/tests/casos-uso.test.js"
   },
   "keywords": [],
   "author": "",
@@ -18,3 +18,4 @@
     "express": "^5.3.0"
   }
 }
+

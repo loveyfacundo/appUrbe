@@ -21,6 +21,10 @@ credenciales. Los valores incluidos son solo para desarrollo:
 docker compose --env-file .env.example up --build
 ```
 
+`JWT_SECRET` firma los tokens Bearer usados por la API de viajes. El valor de
+`.env.example` es únicamente para desarrollo; reemplazarlo por un secreto
+aleatorio antes de cualquier despliegue compartido o productivo.
+
 Para ejecutar en segundo plano:
 
 ```powershell

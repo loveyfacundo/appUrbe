@@ -75,6 +75,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
         '500': { $ref: '#/components/responses/ServerError' }
       x-authorization: El pasajero, el conductor asignado y operadores autorizados pueden consultar el viaje.
   /api/v1/viajes/{tripId}/cancelacion:

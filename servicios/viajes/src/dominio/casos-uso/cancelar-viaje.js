@@ -34,7 +34,7 @@ class CancelarViaje {
     const viaje = await this.repositorio.buscarPorId(identificadorViaje);
     if (!viaje) throw new RecursoNoEncontrado();
     const autorizado = actor.identificador === viaje.pasajeroId ||
-      actor.roles?.includes('operador') && actor.permisos?.includes('viajes:cancelar');
+      actor.roles?.includes('operador') && actor.permisos?.includes('trips:cancel');
     if (!autorizado) throw new OperacionNoPermitida();
     viaje.cancelar();
     await this.repositorio.guardar(viaje);

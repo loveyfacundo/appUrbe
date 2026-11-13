@@ -5,17 +5,25 @@ const {
 
 const ESTADOS = Object.freeze({
   SOLICITADO: 'REQUESTED',
+  DESPACHANDO: 'DISPATCHING',
   ASIGNADO: 'ASSIGNED',
-  INICIADO: 'STARTED',
+  EN_ORIGEN: 'DRIVER_ARRIVING',
+  EN_CURSO: 'IN_PROGRESS',
+  FINALIZADO: 'COMPLETED',
+  SIN_CONDUCTOR: 'NO_DRIVERS_AVAILABLE',
+  INICIADO: 'IN_PROGRESS',
   COMPLETADO: 'COMPLETED',
   CANCELADO: 'CANCELLED'
 });
 
 const TRANSICIONES = Object.freeze({
-  [ESTADOS.SOLICITADO]: [ESTADOS.ASIGNADO, ESTADOS.CANCELADO],
-  [ESTADOS.ASIGNADO]: [ESTADOS.INICIADO, ESTADOS.CANCELADO],
-  [ESTADOS.INICIADO]: [ESTADOS.COMPLETADO],
-  [ESTADOS.COMPLETADO]: [],
+  [ESTADOS.SOLICITADO]: [ESTADOS.DESPACHANDO, ESTADOS.ASIGNADO, ESTADOS.CANCELADO],
+  [ESTADOS.DESPACHANDO]: [ESTADOS.ASIGNADO, ESTADOS.SIN_CONDUCTOR, ESTADOS.CANCELADO],
+  [ESTADOS.ASIGNADO]: [ESTADOS.EN_ORIGEN, ESTADOS.INICIADO, ESTADOS.CANCELADO],
+  [ESTADOS.EN_ORIGEN]: [ESTADOS.EN_CURSO, ESTADOS.CANCELADO],
+  [ESTADOS.EN_CURSO]: [ESTADOS.FINALIZADO],
+  [ESTADOS.FINALIZADO]: [],
+  [ESTADOS.SIN_CONDUCTOR]: [],
   [ESTADOS.CANCELADO]: []
 });
 
@@ -75,14 +83,35 @@ class Viaje {
     return this;
   }
 
-  iniciar(actorId, ahora = new Date().toISOString()) {
+  despachar(ahora = new Date().toISOString()) {
+    return this.cambiarEstado(ESTADOS.DESPACHANDO, ahora);
+  }
+
+  marcarSinConductor(ahora = new Date().toISOString()) {
+    return this.cambiarEstado(ESTADOS.SIN_CONDUCTOR, ahora);
+  }
+
+  llegarAlOrigen(actorId, ahora = new Date().toISOString()) {
     this.verificarConductor(actorId);
-    return this.cambiarEstado(ESTADOS.INICIADO, ahora);
+    return this.cambiarEstado(ESTADOS.EN_ORIGEN, ahora);
+  }
+
+  iniciarEnCurso(actorId, ahora = new Date().toISOString()) {
+    this.verificarConductor(actorId);
+    return this.cambiarEstado(ESTADOS.EN_CURSO, ahora);
+  }
+
+  finalizar(actorId, ahora = new Date().toISOString()) {
+    this.verificarConductor(actorId);
+    return this.cambiarEstado(ESTADOS.FINALIZADO, ahora);
+  }
+
+  iniciar(actorId, ahora = new Date().toISOString()) {
+    return this.iniciarEnCurso(actorId, ahora);
   }
 
   completar(actorId, ahora = new Date().toISOString()) {
-    this.verificarConductor(actorId);
-    return this.cambiarEstado(ESTADOS.COMPLETADO, ahora);
+    return this.finalizar(actorId, ahora);
   }
 
   cancelar(ahora = new Date().toISOString()) {

@@ -1,7 +1,7 @@
 # Usamos CommonJS para organizar los módulos del backend
 
-- **Estado:** Propuesto
-- **Fecha:** 2026-10-29
+- **Estado:** Aceptado
+- **Fecha:** 29/10/2026
 - **Participantes:** Lovey Facundo y Vernengo Hipólito.
 
 ## Contexto
@@ -105,23 +105,7 @@ y que nos permita avanzar con menor complejidad accidental.
 
 ## Decisión
 
-Usaremos **CommonJS** en todo el backend:  Node.js 22 + Express + JavaScript + CommonJS
-
-
-Mantendremos CommonJS y no lo mezclaremos con ESM dentro del mismo proyecto.
-
-Los módulos seguirán la siguiente convención:
-
-```js
-const express = require('express');
-const { crearViaje } = require('./casos-uso/crear-viaje');
-
-module.exports = { crearViaje };
-```
-
-La decisión no impide revisar ESM en el futuro, pero cualquier cambio deberá
-realizarse como una nueva decisión documentada y acompañado por una migración
-completa.
+Usaremos CommonJS en todo el backend con Node.js 22, Express y JavaScript, sin mezclarlo con ESM. Cualquier migración futura deberá documentarse como una nueva decisión y realizarse de forma completa.
 
 ## Consecuencias
 

@@ -109,6 +109,37 @@ paths:
         '500': { $ref: '#/components/responses/ServerError' }
       x-authorization: El pasajero o un operador con permiso trips:cancel puede cancelar.
       x-idempotency: Obligatoria. No se cobra dos veces por reintentos.
+  /api/v1/viajes/{tripId}/estado:
+    patch:
+      tags: [Viajes]
+      summary: Actualizar el estado operativo de un viaje
+      operationId: actualizarEstadoViaje
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              additionalProperties: false
+              properties:
+                status: { type: string, enum: [DRIVER_ARRIVING, IN_PROGRESS, COMPLETED] }
+      responses:
+        '200':
+          description: Estado actualizado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Trip' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+      x-authorization: Solo el conductor asignado puede actualizar el estado operativo.
   /api/v1/reservas:
     post:
       tags: [Reservas]
@@ -233,7 +264,7 @@ components:
         destination: { $ref: '#/components/schemas/Coordinates' }
         status:
           type: string
-          enum: [REQUESTED, ASSIGNED, STARTED, COMPLETED, CANCELLED]
+          enum: [REQUESTED, DISPATCHING, ASSIGNED, DRIVER_ARRIVING, IN_PROGRESS, COMPLETED, NO_DRIVERS_AVAILABLE, CANCELLED]
         scheduledAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }

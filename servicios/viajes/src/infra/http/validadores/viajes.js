@@ -64,8 +64,16 @@ function validarCancelacion(body) {
   }
 }
 
+function validarActualizacionEstado(body) {
+  validarObjeto(body, 'body', ['status']);
+  if (typeof body.status !== 'string') {
+    throw new ErrorDeValidacion('status es obligatorio');
+  }
+}
+
 module.exports = {
   validarClaveIdempotencia,
   validarSolicitudViaje,
-  validarCancelacion
+  validarCancelacion,
+  validarActualizacionEstado
 };

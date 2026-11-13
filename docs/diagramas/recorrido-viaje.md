@@ -71,7 +71,7 @@ configurados y documentados; no se fijan en este diagrama.
 
 | Estado | Significado |
 |---|---|
-| `CREATED` | El pasajero aceptó la estimación y se creó el viaje. |
+| `REQUESTED` | El pasajero aceptó la estimación y se creó el viaje. |
 | `DISPATCHING` | Se están ofreciendo viajes a conductores disponibles. |
 | `ASSIGNED` | Un conductor aceptó dentro del tiempo permitido. |
 | `DRIVER_ARRIVING` | El conductor está llegando al punto de encuentro. |
@@ -83,8 +83,8 @@ configurados y documentados; no se fijan en este diagrama.
 Recorrido normal:
 
 ```text
-CREATED → DISPATCHING → ASSIGNED → DRIVER_ARRIVING → IN_PROGRESS → COMPLETED
-                              ↘ NO_DRIVERS_AVAILABLE
+REQUESTED → DISPATCHING → ASSIGNED → DRIVER_ARRIVING → IN_PROGRESS → COMPLETED
+                                  ↘ NO_DRIVERS_AVAILABLE
 ```
 
 ## Actualizaciones en tiempo real
@@ -113,4 +113,3 @@ ponerse al día aunque se haya perdido algún evento mientras estaba desconectad
 - Si se pierde SSE, al reconectarse el pasajero puede recuperar el estado actual y la posición más reciente.
 - Solo el conductor asignado puede iniciar y terminar el viaje.
 - Reintentar una operación no duplica el viaje ni el pago.
-

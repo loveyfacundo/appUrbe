@@ -56,5 +56,3 @@ Cada fila contesta cuatro preguntas:
 | G-08 | El programa debe poder ejecutarse y probarse siguiendo instrucciones. | Seguir el README desde un entorno limpio. | README y resultados |
 
 | G-09 | Los dos integrantes deben participar y poder explicar el trabajo. | Revisar cambios, Pull Requests y pruebas realizados por ambos. | Historial del repositorio |
-
-

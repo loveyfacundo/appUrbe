@@ -11,7 +11,7 @@ services:
       PORT: 3000
       HOST: 0.0.0.0
       JWT_SECRET: ${JWT_SECRET:-}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-appurbe}:${POSTGRES_PASSWORD:-appurbe_dev_only}@postgres:5432/${POSTGRES_DB:-appurbe}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-appurbe}:${POSTGRES_PASSWORD:-AppUrbe2026}@postgres:5432/${POSTGRES_DB:-appurbe}
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-appurbe}:${RABBITMQ_PASSWORD:-appurbe_dev_only}@rabbitmq:5672
       REDIS_URL: redis://redis:6379
     depends_on:
@@ -22,11 +22,11 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/health/ready', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 10s
       timeout: 3s
       retries: 5
-      start_period: 10s
+      start_period: 15s
     restart: unless-stopped
 
   postgres:
@@ -34,16 +34,18 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-appurbe}
       POSTGRES_USER: ${POSTGRES_USER:-appurbe}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-appurbe_dev_only}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-AppUrbe2026}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-55432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./infraestructura/postgres/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
     restart: unless-stopped
 
   rabbitmq:

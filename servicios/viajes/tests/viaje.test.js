@@ -42,3 +42,18 @@ test('valida coordenadas y direcciones según el contrato', () => {
     destino: ubicacion
   }), ErrorDeValidacion);
 });
+
+test('aplica el ciclo operativo requerido y exige al conductor asignado', () => {
+  const viaje = crearViaje();
+  viaje.despachar().asignar(ids.conductor).llegarAlOrigen(ids.conductor);
+  assert.equal(viaje.estado, ESTADOS.EN_ORIGEN);
+  assert.throws(() => viaje.iniciarEnCurso(ids.pasajero), ConflictoDeEstado);
+  viaje.iniciarEnCurso(ids.conductor).finalizar(ids.conductor);
+  assert.equal(viaje.estado, ESTADOS.FINALIZADO);
+});
+
+test('permite marcar que no hubo conductor durante el despacho', () => {
+  const viaje = crearViaje();
+  viaje.despachar().marcarSinConductor();
+  assert.equal(viaje.estado, ESTADOS.SIN_CONDUCTOR);
+});

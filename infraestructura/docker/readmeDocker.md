@@ -12,6 +12,15 @@
 PostgreSQL, RabbitMQ y Redis utilizan volúmenes Docker para conservar sus
 datos entre reinicios.
 
+Las migraciones SQL de viajes se montan en
+`/docker-entrypoint-initdb.d` y PostgreSQL las ejecuta automáticamente al crear
+un volumen nuevo. Para volver a ejecutarlas desde cero en desarrollo:
+
+```powershell
+docker compose down -v
+docker compose --env-file .env.example up --build
+```
+
 ## Uso local
 
 Copiar `.env.example` como `.env` si se desean personalizar puertos o
@@ -96,7 +105,12 @@ El token debe tener permisos para escribir en el repositorio
 `loveyfacundo/appurbe`. No se deben agregar estos valores a `.env`,
 `docker-compose.yml` ni a ningún archivo versionado.
 
-## Health check
+## Health checks
 
-La aplicación expone `GET /health`. Compose y el propio `Dockerfile` lo usan
-para verificar que la API está disponible antes de considerarla saludable.
+La aplicación expone dos endpoints:
+
+- `GET /health`: liveness; verifica que el proceso HTTP está activo.
+- `GET /health/ready`: readiness; ejecuta `SELECT 1` contra PostgreSQL.
+
+Compose y el `Dockerfile` usan `/health/ready`, por lo que la aplicación no se
+considera saludable hasta que PostgreSQL acepta consultas.

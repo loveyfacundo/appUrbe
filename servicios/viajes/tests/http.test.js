@@ -34,7 +34,11 @@ function crearToken(sub, extra = {}) {
 }
 
 async function iniciarApp(t, opciones = {}) {
-  const app = crearServidor({ secret: SECRET, ...opciones });
+  const app = crearServidor({
+    secret: SECRET,
+    verificadorPostgres: { verificar: async () => {} },
+    ...opciones
+  });
   const servidor = app.listen(0, '127.0.0.1');
   await once(servidor, 'listening');
   t.after(() => new Promise((resolve, reject) => {
@@ -196,4 +200,63 @@ test('health check permanece disponible sin autenticación', async (t) => {
   const respuesta = await fetch(`${baseUrl}/health`);
   assert.equal(respuesta.status, 200);
   assert.deepEqual(await respuesta.json(), { status: 'ok' });
+});
+
+test('readiness check informa que PostgreSQL está disponible', async (t) => {
+  const baseUrl = await iniciarApp(t, {
+    verificadorPostgres: { verificar: async () => {} }
+  });
+  const respuesta = await fetch(`${baseUrl}/health/ready`);
+  assert.equal(respuesta.status, 200);
+  assert.deepEqual(await respuesta.json(), {
+    status: 'ok',
+    dependencies: { postgres: 'ok' }
+  });
+});
+
+test('readiness check devuelve 503 si PostgreSQL no está disponible', async (t) => {
+  const baseUrl = await iniciarApp(t, {
+    verificadorPostgres: {
+      verificar: async () => {
+        throw new Error('connection refused');
+      }
+    }
+  });
+  const respuesta = await fetch(`${baseUrl}/health/ready`);
+  assert.equal(respuesta.status, 503);
+  assert.deepEqual(await respuesta.json(), {
+    status: 'unavailable',
+    dependencies: { postgres: 'unavailable' }
+  });
+});
+
+test('HTTP permite al conductor asignado avanzar el estado operativo', async (t) => {
+  const { crearModuloViajes } = require('../src/composicion');
+  const modulo = crearModuloViajes();
+  const conductorId = '6a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765';
+  const creado = await modulo.casosUso.solicitar.ejecutar({
+    pasajeroId,
+    ...{
+      origen: { latitud: ubicaciones.origin.latitude, longitud: ubicaciones.origin.longitude, direccion: ubicaciones.origin.address },
+      destino: { latitud: ubicaciones.destination.latitude, longitud: ubicaciones.destination.longitude, direccion: ubicaciones.destination.address }
+    },
+    claveIdempotencia: claveIdempotencia,
+    idCorrelacion: correlationId
+  });
+  const viaje = await modulo.repositorio.buscarPorId(creado.identificador);
+  viaje.asignar(conductorId);
+  await modulo.repositorio.guardar(viaje);
+  const baseUrl = await iniciarApp(t, { modulo });
+  const token = crearToken(conductorId, { roles: ['conductor'] });
+  const respuesta = await fetch(`${baseUrl}/api/v1/viajes/${creado.identificador}/estado`, {
+    method: 'PATCH',
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+      'x-correlation-id': correlationId
+    },
+    body: JSON.stringify({ status: 'DRIVER_ARRIVING' })
+  });
+  assert.equal(respuesta.status, 200);
+  assert.equal((await respuesta.json()).status, 'DRIVER_ARRIVING');
 });

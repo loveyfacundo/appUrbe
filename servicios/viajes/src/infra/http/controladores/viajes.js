@@ -2,7 +2,8 @@ const { validarUuid } = require('../../../dominio/entidades/viaje');
 const {
   validarClaveIdempotencia,
   validarSolicitudViaje,
-  validarCancelacion
+  validarCancelacion,
+  validarActualizacionEstado
 } = require('../validadores/viajes');
 
 function aContrato(viaje) {
@@ -69,6 +70,18 @@ function crearControladorViajes(casosUso) {
         actor: req.actor,
         motivo: req.body.reason,
         claveIdempotencia: req.get('idempotency-key'),
+        idCorrelacion: req.idCorrelacion
+      });
+      return res.status(200).json(aContrato(viaje));
+    },
+
+    actualizarEstado: async (req, res) => {
+      validarUuid(req.params.tripId, 'tripId');
+      validarActualizacionEstado(req.body);
+      const viaje = await casosUso.actualizarEstado.ejecutar({
+        identificadorViaje: req.params.tripId,
+        actor: req.actor,
+        estado: req.body.status,
         idCorrelacion: req.idCorrelacion
       });
       return res.status(200).json(aContrato(viaje));

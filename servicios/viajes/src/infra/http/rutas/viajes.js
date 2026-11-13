@@ -8,6 +8,7 @@ function crearRutasViajes({ casosUso, autenticar }) {
   router.post('/', controlador.solicitar);
   router.get('/:tripId', controlador.obtener);
   router.post('/:tripId/cancelacion', controlador.cancelar);
+  router.patch('/:tripId/estado', controlador.actualizarEstado);
   return router;
 }
 

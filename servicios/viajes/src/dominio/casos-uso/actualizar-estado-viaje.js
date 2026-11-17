@@ -1,7 +1,7 @@
 const {
   ErrorDeValidacion,
   OperacionNoPermitida,
-  RecursoNoEncontrado
+  ConflictoDeEstado
 } = require('../errores/errores');
 const { ESTADOS } = require('../entidades/viaje');
 
@@ -12,35 +12,76 @@ const ESTADOS_OPERATIVOS = new Set([
 ]);
 
 class ActualizarEstadoViaje {
-  constructor({ repositorio, publicador }) {
+  constructor({ repositorio, publicador, idempotencia, bloqueador }) {
     this.repositorio = repositorio;
     this.publicador = publicador;
+    this.idempotencia = idempotencia;
+    this.bloqueador = bloqueador;
   }
 
-  async ejecutar({ identificadorViaje, actor, estado, idCorrelacion }) {
+  async ejecutar({
+    identificadorViaje,
+    actor,
+    estado,
+    claveIdempotencia,
+    idCorrelacion
+  }) {
     if (!ESTADOS_OPERATIVOS.has(estado)) {
       throw new ErrorDeValidacion('estado no es una transición operativa válida');
     }
-    const viaje = await this.repositorio.buscarPorId(identificadorViaje);
-    if (!viaje) throw new RecursoNoEncontrado();
-    if (viaje.conductorId !== actor?.identificador) {
+    if (!actor || !actor.roles?.includes('conductor')) {
       throw new OperacionNoPermitida('Solo el conductor asignado puede actualizar el estado');
     }
+    if (!claveIdempotencia || !idCorrelacion) {
+      throw new ErrorDeValidacion('claveIdempotencia e idCorrelacion son obligatorios');
+    }
 
-    if (estado === ESTADOS.EN_ORIGEN) viaje.llegarAlOrigen(actor.identificador);
-    if (estado === ESTADOS.EN_CURSO) viaje.iniciarEnCurso(actor.identificador);
-    if (estado === ESTADOS.FINALIZADO) viaje.finalizar(actor.identificador);
-    await this.repositorio.guardar(viaje);
+    const clave = `${actor.identificador}:${claveIdempotencia}`;
+    const huella = JSON.stringify({ identificadorViaje, estado });
+    return this.bloqueador.ejecutar(`idempotencia:${clave}`, async () => {
+      const anterior = await this.idempotencia.buscar(clave);
+      if (anterior) {
+        if (anterior.huella !== huella) {
+          throw new ConflictoDeEstado('La clave de idempotencia fue reutilizada con otro request');
+        }
+        return anterior.respuesta;
+      }
 
-    const tipoEvento = estado === ESTADOS.FINALIZADO ? 'TripCompleted' : 'TripStarted';
-    await this.publicador.publicar(tipoEvento, {
-      tripId: viaje.identificador,
-      driverId: viaje.conductorId,
-      status: viaje.estado,
-      ...(estado === ESTADOS.EN_CURSO ? { startedAt: viaje.actualizadoEn } : {}),
-      ...(estado === ESTADOS.FINALIZADO ? { completedAt: viaje.actualizadoEn } : {})
-    }, { idCorrelacion });
-    return viaje.toJSON();
+      const datosEvento = estado === ESTADOS.EN_CURSO || estado === ESTADOS.FINALIZADO
+        ? {
+          tipoEvento: estado === ESTADOS.FINALIZADO ? 'TripCompleted' : 'TripStarted',
+          payload: {
+            tripId: identificadorViaje,
+            driverId: actor.identificador,
+            status: estado
+          }
+        }
+        : null;
+      const evento = datosEvento
+        ? this.publicador.crearEvento(datosEvento.tipoEvento, datosEvento.payload, { idCorrelacion })
+        : undefined;
+      const viaje = await this.repositorio.actualizarEstadoOperativo({
+        identificadorViaje,
+        actorId: actor.identificador,
+        estado,
+        evento: this.repositorio.persisteOutbox ? evento : undefined,
+        idempotencia: this.repositorio.persisteOutbox ? {
+          clave,
+          huella,
+          tiempoVidaMs: this.idempotencia.tiempoVidaMs
+        } : undefined
+      });
+
+      if (evento) {
+        evento.payload.status = viaje.estado;
+        if (estado === ESTADOS.EN_CURSO) evento.payload.startedAt = viaje.actualizadoEn;
+        if (estado === ESTADOS.FINALIZADO) evento.payload.completedAt = viaje.actualizadoEn;
+        if (!this.repositorio.persisteOutbox) await this.publicador.publicar(evento);
+      }
+      const respuesta = viaje.toJSON();
+      await this.idempotencia.guardar(clave, huella, respuesta);
+      return respuesta;
+    });
   }
 }
 

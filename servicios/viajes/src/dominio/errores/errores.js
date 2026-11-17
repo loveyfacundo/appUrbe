@@ -36,10 +36,18 @@ class ConflictoDeEstado extends ErrorDeDominio {
   }
 }
 
+class DependenciaNoDisponible extends ErrorDeDominio {
+  constructor(mensaje) {
+    super('DEPENDENCY_UNAVAILABLE', mensaje, 503);
+    this.name = 'DependenciaNoDisponible';
+  }
+}
+
 module.exports = {
   ErrorDeDominio,
   ErrorDeValidacion,
   RecursoNoEncontrado,
   OperacionNoPermitida,
-  ConflictoDeEstado
+  ConflictoDeEstado,
+  DependenciaNoDisponible
 };

@@ -8,14 +8,17 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "test": "node --test servicios/viajes/tests/viaje.test.js servicios/viajes/tests/casos-uso.test.js servicios/viajes/tests/http.test.js servicios/viajes/tests/repositorios-postgres.test.js"
+    "measure:assignment": "node tests/performance/medir-asignacion.js",
+    "test": "node --test servicios/viajes/tests/viaje.test.js servicios/viajes/tests/casos-uso.test.js servicios/viajes/tests/http.test.js servicios/viajes/tests/repositorios-postgres.test.js servicios/viajes/tests/mensajeria-rabbitmq.test.js servicios/viajes/tests/migraciones.test.js servicios/viajes/tests/redis.test.js servicios/viajes/tests/outbox.test.js tests/concurrencia/postgres-asignacion.test.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "amqplib": "^2.3.1",
     "express": "^5.3.0",
-    "pg": "^8.23.1"
+    "pg": "^8.23.1",
+    "redis": "^6.3.1"
   }
 }

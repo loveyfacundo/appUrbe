@@ -37,13 +37,22 @@ class CancelarViaje {
       actor.roles?.includes('operador') && actor.permisos?.includes('trips:cancel');
     if (!autorizado) throw new OperacionNoPermitida();
     viaje.cancelar();
-    await this.repositorio.guardar(viaje);
-    const respuesta = viaje.toJSON();
-    await this.publicador.publicar('TripCancelled', {
+    const evento = this.publicador.crearEvento('TripCancelled', {
       tripId: viaje.identificador,
       cancelledBy: actor.identificador,
       reason: motivo
     }, { idCorrelacion });
+    await this.repositorio.guardar(
+      viaje,
+      this.repositorio.persisteOutbox ? evento : undefined,
+      this.repositorio.persisteOutbox ? {
+        clave,
+        huella,
+        tiempoVidaMs: this.idempotencia.tiempoVidaMs
+      } : undefined
+    );
+    if (!this.repositorio.persisteOutbox) await this.publicador.publicar(evento);
+    const respuesta = viaje.toJSON();
     await this.idempotencia.guardar(clave, huella, respuesta);
     return respuesta;
   }

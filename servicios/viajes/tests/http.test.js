@@ -230,6 +230,23 @@ test('readiness check devuelve 503 si PostgreSQL no está disponible', async (t)
   });
 });
 
+test('readiness informa qué dependencia auxiliar no está disponible', async (t) => {
+  const { crearModuloViajes } = require('../src/composicion');
+  const modulo = crearModuloViajes();
+  modulo.verificar = async () => {
+    const error = new Error('RabbitMQ caído');
+    error.dependencia = 'rabbitmq';
+    throw error;
+  };
+  const baseUrl = await iniciarApp(t, { modulo });
+  const respuesta = await fetch(`${baseUrl}/health/ready`);
+  assert.equal(respuesta.status, 503);
+  assert.deepEqual(await respuesta.json(), {
+    status: 'unavailable',
+    dependencies: { postgres: 'ok', rabbitmq: 'unavailable' }
+  });
+});
+
 test('HTTP permite al conductor asignado avanzar el estado operativo', async (t) => {
   const { crearModuloViajes } = require('../src/composicion');
   const modulo = crearModuloViajes();
@@ -253,10 +270,114 @@ test('HTTP permite al conductor asignado avanzar el estado operativo', async (t)
     headers: {
       authorization: `Bearer ${token}`,
       'content-type': 'application/json',
-      'x-correlation-id': correlationId
+      'x-correlation-id': correlationId,
+      'idempotency-key': '6a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765'
     },
     body: JSON.stringify({ status: 'DRIVER_ARRIVING' })
   });
   assert.equal(respuesta.status, 200);
   assert.equal((await respuesta.json()).status, 'DRIVER_ARRIVING');
+  const iniciar = await fetch(`${baseUrl}/api/v1/viajes/${creado.identificador}/estado`, {
+    method: 'PATCH',
+    headers: {
+      ...headers(token),
+      'idempotency-key': '7a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765'
+    },
+    body: JSON.stringify({ status: 'IN_PROGRESS' })
+  });
+  assert.equal(iniciar.status, 200);
+  const viajeIniciado = await iniciar.json();
+  assert.equal(viajeIniciado.status, 'IN_PROGRESS');
+  const iniciarRepetido = await fetch(`${baseUrl}/api/v1/viajes/${creado.identificador}/estado`, {
+    method: 'PATCH',
+    headers: {
+      ...headers(token),
+      'idempotency-key': '7a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765'
+    },
+    body: JSON.stringify({ status: 'IN_PROGRESS' })
+  });
+  assert.equal(iniciarRepetido.status, 200);
+  assert.deepEqual(await iniciarRepetido.json(), viajeIniciado);
+  const completar = await fetch(`${baseUrl}/api/v1/viajes/${creado.identificador}/estado`, {
+    method: 'PATCH',
+    headers: {
+      ...headers(token),
+      'idempotency-key': '8a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765'
+    },
+    body: JSON.stringify({ status: 'COMPLETED' })
+  });
+  assert.equal(completar.status, 200);
+  const viajeCompletado = await completar.json();
+  assert.equal(viajeCompletado.status, 'COMPLETED');
+  assert.deepEqual(
+    modulo.publicador.eventos.slice(-2).map((evento) => evento.eventType),
+    ['TripStarted', 'TripCompleted']
+  );
+  assert.equal(
+    modulo.publicador.eventos.at(-2).payload.startedAt,
+    viajeIniciado.updatedAt
+  );
+  assert.equal(
+    modulo.publicador.eventos.at(-1).payload.completedAt,
+    viajeCompletado.updatedAt
+  );
+});
+
+test('HTTP permite que solo un conductor acepte el viaje y deduplica el reintento', async (t) => {
+  const { crearModuloViajes } = require('../src/composicion');
+  const modulo = crearModuloViajes();
+  const creado = await modulo.casosUso.solicitar.ejecutar({
+    pasajeroId,
+    origen: {
+      latitud: ubicaciones.origin.latitude,
+      longitud: ubicaciones.origin.longitude,
+      direccion: ubicaciones.origin.address
+    },
+    destino: {
+      latitud: ubicaciones.destination.latitude,
+      longitud: ubicaciones.destination.longitude,
+      direccion: ubicaciones.destination.address
+    },
+    claveIdempotencia,
+    idCorrelacion: correlationId
+  });
+  const baseUrl = await iniciarApp(t, { modulo });
+  const conductores = [
+    '6a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765',
+    '7a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765'
+  ];
+  const claves = [
+    '8a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765',
+    '9a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765'
+  ];
+  const respuestas = await Promise.all(conductores.map((conductorId, indice) =>
+    fetch(`${baseUrl}/api/v1/viajes/${creado.identificador}/asignacion`, {
+      method: 'POST',
+      headers: {
+        ...headers(crearToken(conductorId, { roles: ['conductor'] })),
+        'idempotency-key': claves[indice]
+      }
+    })
+  ));
+  assert.deepEqual(respuestas.map((respuesta) => respuesta.status).sort(), [200, 409]);
+  const ganador = respuestas.find((respuesta) => respuesta.status === 200);
+  const viajeAsignado = await ganador.json();
+  assert.equal(viajeAsignado.status, 'ASSIGNED');
+  assert.ok(conductores.includes(viajeAsignado.driverId));
+
+  const indiceGanador = conductores.indexOf(viajeAsignado.driverId);
+  const reintento = await fetch(
+    `${baseUrl}/api/v1/viajes/${creado.identificador}/asignacion`,
+    {
+      method: 'POST',
+      headers: {
+        ...headers(crearToken(viajeAsignado.driverId, { roles: ['conductor'] })),
+        'idempotency-key': claves[indiceGanador]
+      }
+    }
+  );
+  assert.equal(reintento.status, 200);
+  assert.deepEqual(await reintento.json(), viajeAsignado);
+  assert.equal(modulo.publicador.eventos.filter((evento) =>
+    evento.eventType === 'DriverAssigned').length, 1);
 });

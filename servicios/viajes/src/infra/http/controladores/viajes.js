@@ -77,11 +77,25 @@ function crearControladorViajes(casosUso) {
 
     actualizarEstado: async (req, res) => {
       validarUuid(req.params.tripId, 'tripId');
+      validarClaveIdempotencia(req.get('idempotency-key'));
       validarActualizacionEstado(req.body);
       const viaje = await casosUso.actualizarEstado.ejecutar({
         identificadorViaje: req.params.tripId,
         actor: req.actor,
         estado: req.body.status,
+        claveIdempotencia: req.get('idempotency-key'),
+        idCorrelacion: req.idCorrelacion
+      });
+      return res.status(200).json(aContrato(viaje));
+    },
+
+    aceptarAsignacion: async (req, res) => {
+      validarUuid(req.params.tripId, 'tripId');
+      validarClaveIdempotencia(req.get('idempotency-key'));
+      const viaje = await casosUso.aceptarAsignacion.ejecutar({
+        identificadorViaje: req.params.tripId,
+        actor: req.actor,
+        claveIdempotencia: req.get('idempotency-key'),
         idCorrelacion: req.idCorrelacion
       });
       return res.status(200).json(aContrato(viaje));

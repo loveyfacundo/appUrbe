@@ -19,9 +19,8 @@ Cada fila contesta cuatro preguntas:
 
 | F-04 | Mostrar una estimación del precio antes de crear el viaje y crearlo solo si el pasajero confirma. | M5 / M6 / M7 | Consultar una estimación; comprobar que sin confirmación no se cree el viaje y que al confirmar sí se cree. | Pruebas del recorrido y de la estimación |
 
-| F-05 | Asignar un solo conductor a cada viaje. | M4 / M5 / M6 | Probar que dos conductores no puedan ganar la misma asignación. | Prueba de asignación |
-
-| F-06 | Permitir que el conductor asignado inicie y termine el viaje. | M6 | Probar el orden correcto y rechazar acciones de otro conductor o fuera de orden. | Pruebas de estados y permisos |
+| F-05 | Asignar un solo conductor a cada viaje. | M4 / M5 / M6 | Dos aceptaciones concurrentes contra PostgreSQL; solo una actualiza el viaje y la otra recibe 409. | Prueba `tests/concurrencia/postgres-asignacion.test.js`, evento `DriverAssigned` y medición de `docs/mediciones.md` |
+| F-06 | Permitir que el conductor asignado inicie y termine el viaje. | M6 | Probar el orden correcto, idempotencia y rechazar acciones de otro conductor o fuera de orden. | Pruebas de estados, permisos y eventos `TripStarted` / `TripCompleted` |
 
 | F-07 | Permitir cancelaciones según las reglas acordadas. | M6 / M9 | Probar cancelaciones permitidas y rechazadas. | Reglas escritas y pruebas |
 
@@ -43,7 +42,7 @@ Cada fila contesta cuatro preguntas:
 
 | G-02 | Los viajes deben seguir los estados acordados. | Probar los cambios de estado permitidos y rechazar los demás. | Tabla de estados y pruebas |
 
-| G-03 | Repetir una operación importante no debe duplicar el resultado. | Repetir solicitudes, asignaciones y pagos. | Pruebas de repetición |
+| G-03 | Repetir una operación importante no debe duplicar el resultado. | Repetir solicitudes, asignaciones y pagos. | Pruebas de repetición, claves de 24 horas y deduplicación de consumidores por `eventId` |
 
 | G-04 | Los datos que recibe el sistema deben validarse. | Probar campos faltantes o con formato incorrecto. | Pruebas de validación |
 

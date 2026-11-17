@@ -6,15 +6,17 @@
 
 - `app`: API Node.js 22 + Express en `http://localhost:3000`.
 - `postgres`: PostgreSQL 16 para persistencia.
-- `rabbitmq`: RabbitMQ 3.13; panel en `http://localhost:15672`.
-- `redis`: Redis 7 para caché, TTL, locks e idempotencia.
+- `rabbitmq`: RabbitMQ 3.13; el servicio publica eventos persistentes en un exchange durable y el panel está en `http://localhost:15672`.
+- `redis`: Redis 7 para bloqueos distribuidos con vencimiento y operaciones idempotentes.
 
 PostgreSQL, RabbitMQ y Redis utilizan volúmenes Docker para conservar sus
 datos entre reinicios.
 
 Las migraciones SQL de viajes se montan en
 `/docker-entrypoint-initdb.d` y PostgreSQL las ejecuta automáticamente al crear
-un volumen nuevo. Para volver a ejecutarlas desde cero en desarrollo:
+un volumen nuevo. La aplicación también registra y aplica las migraciones
+pendientes al iniciar, por lo que un volumen existente recibe las migraciones
+nuevas sin borrar sus datos. Para volver a crear todo desde cero en desarrollo:
 
 ```powershell
 docker compose down -v
@@ -46,6 +48,26 @@ Comprobar el estado:
 docker compose ps
 Invoke-WebRequest http://localhost:3000/health
 ```
+
+La prueba concurrente usa una base PostgreSQL de prueba dedicada y aplica las
+migraciones automáticamente. Configurar `TEST_DATABASE_URL` para ejecutarla;
+sin esa variable la prueba queda omitida:
+
+```powershell
+$env:TEST_DATABASE_URL = "postgresql://appurbe:AppUrbe2026@localhost:55432/appurbe_test"
+npm test
+```
+
+Para registrar latencia y throughput del endpoint de asignación en el entorno
+local:
+
+```powershell
+$env:TEST_DATABASE_URL = "postgresql://appurbe:AppUrbe2026@localhost:55432/appurbe_test"
+npm run measure:assignment
+```
+
+El escenario, la meta y el espacio para registrar resultados están en
+[`docs/mediciones.md`](../../docs/mediciones.md).
 
 Detener los contenedores sin borrar datos:
 
@@ -111,6 +133,7 @@ La aplicación expone dos endpoints:
 
 - `GET /health`: liveness; verifica que el proceso HTTP está activo.
 - `GET /health/ready`: readiness; ejecuta `SELECT 1` contra PostgreSQL.
+- La readiness también verifica RabbitMQ y Redis cuando están configurados.
 
 Compose y el `Dockerfile` usan `/health/ready`, por lo que la aplicación no se
 considera saludable hasta que PostgreSQL acepta consultas.

@@ -1,4 +1,5 @@
 const { PublicadorEventos } = require('../../dominio/puertos/publicador-eventos');
+const { crearEvento } = require('./evento');
 
 class PublicadorEventosSimulado extends PublicadorEventos {
   constructor() {
@@ -6,22 +7,17 @@ class PublicadorEventosSimulado extends PublicadorEventos {
     this.eventos = [];
   }
 
-  async publicar(tipoEvento, carga, { idCorrelacion = null, idCausacion = null } = {}) {
-    const evento = {
-      eventId: crypto.randomUUID(),
-      eventType: tipoEvento,
-      eventVersion: 1,
-      occurredAt: new Date().toISOString(),
-      correlationId: idCorrelacion,
-      causationId: idCausacion,
-      producer: 'viajes',
-      payload: structuredClone(carga)
-    };
-    this.eventos.push(evento);
+  crearEvento(tipoEvento, carga, metadata) {
+    return crearEvento(tipoEvento, carga, metadata);
+  }
+
+  async publicar(tipoEvento, carga, metadata) {
+    const evento = typeof tipoEvento === 'object'
+      ? tipoEvento
+      : crearEvento(tipoEvento, carga, metadata);
+    this.eventos.push(structuredClone(evento));
     return evento;
   }
 }
-
-const crypto = require('node:crypto');
 
 module.exports = { PublicadorEventosSimulado };

@@ -118,6 +118,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TripId'
         - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -139,7 +140,36 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+        '500': { $ref: '#/components/responses/ServerError' }
       x-authorization: Solo el conductor asignado puede actualizar el estado operativo.
+      x-idempotency: Obligatoria. Una repetición con la misma clave devuelve la primera respuesta durante 24 horas.
+  /api/v1/viajes/{tripId}/asignacion:
+    post:
+      tags: [Viajes]
+      summary: Aceptar una asignación de viaje
+      operationId: aceptarAsignacionViaje
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+        - $ref: '#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Asignación aceptada por el conductor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Trip' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+        '500': { $ref: '#/components/responses/ServerError' }
+      x-authorization: Solo un conductor autenticado puede aceptar un viaje sin conductor previamente asignado.
+      x-concurrency: La asignación se realiza con una actualización condicional en PostgreSQL; solo una aceptación puede ganar.
+      x-idempotency: Obligatoria. La misma clave y el mismo conductor devuelven la primera respuesta durante 24 horas.
   /api/v1/reservas:
     post:
       tags: [Reservas]
@@ -333,4 +363,7 @@ components:
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
     ServerError:
       description: Error inesperado; no expone detalles internos.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    ServiceUnavailable:
+      description: Una dependencia necesaria no está disponible.
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

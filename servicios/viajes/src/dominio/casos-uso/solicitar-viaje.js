@@ -28,13 +28,22 @@ class SolicitarViaje {
       return anterior.respuesta;
     }
     const viaje = new Viaje({ identificador: crypto.randomUUID(), ...datos });
-    await this.repositorio.guardar(viaje);
-    await this.publicador.publicar('TripRequested', {
+    const evento = this.publicador.crearEvento('TripRequested', {
       tripId: viaje.identificador,
       passengerId: viaje.pasajeroId,
       origin: { latitude: viaje.origen.latitud, longitude: viaje.origen.longitud, address: viaje.origen.direccion },
       destination: { latitude: viaje.destino.latitud, longitude: viaje.destino.longitud, address: viaje.destino.direccion }
     }, { idCorrelacion });
+    await this.repositorio.guardar(
+      viaje,
+      this.repositorio.persisteOutbox ? evento : undefined,
+      this.repositorio.persisteOutbox ? {
+        clave,
+        huella: huellaActual,
+        tiempoVidaMs: this.idempotencia.tiempoVidaMs
+      } : undefined
+    );
+    if (!this.repositorio.persisteOutbox) await this.publicador.publicar(evento);
     const respuesta = viaje.toJSON();
     await this.idempotencia.guardar(clave, huellaActual, respuesta);
     return respuesta;

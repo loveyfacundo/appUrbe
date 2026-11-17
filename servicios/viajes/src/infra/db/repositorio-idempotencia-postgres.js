@@ -12,20 +12,16 @@ class RepositorioIdempotenciaPostgres extends RepositorioIdempotencia {
 
   async buscar(clave) {
     const resultado = await this.pool.query(
-      `DELETE FROM idempotencia
-        WHERE clave = $1 AND expira_en <= NOW()
-        RETURNING clave`,
-      [clave]
-    );
-    if (resultado.rowCount > 0) return null;
-
-    const vigente = await this.pool.query(
-      `SELECT huella, respuesta, EXTRACT(EPOCH FROM expira_en) * 1000 AS expira_en
+      `WITH expiradas AS (
+         DELETE FROM idempotencia
+          WHERE clave = $1 AND expira_en <= NOW()
+       )
+       SELECT huella, respuesta, EXTRACT(EPOCH FROM expira_en) * 1000 AS expira_en
          FROM idempotencia
         WHERE clave = $1 AND expira_en > NOW()`,
       [clave]
     );
-    return vigente.rows[0] || null;
+    return resultado.rows[0] || null;
   }
 
   async guardar(clave, huella, respuesta) {

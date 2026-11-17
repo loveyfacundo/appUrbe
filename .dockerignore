@@ -8,6 +8,11 @@ coverage
 !.env.example
 docs
 images
-infraestructura
+infraestructura/*
+!infraestructura/postgres/
+infraestructura/postgres/*
+!infraestructura/postgres/migrations/
+infraestructura/postgres/migrations/*
+!infraestructura/postgres/migrations/*.sql
 tests
 README.md

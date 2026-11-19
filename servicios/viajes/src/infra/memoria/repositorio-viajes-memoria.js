@@ -35,16 +35,24 @@ class RepositorioViajesMemoria extends RepositorioViajes {
     return this.guardar(viaje);
   }
 
-  async cancelarViaje({ identificadorViaje, actorId, operadorAutorizado = false }) {
+  async cancelarViaje({ identificadorViaje, actorId, operadorAutorizado = false, tipoCancelacion = 'CANCELLED' }) {
     const viaje = await this.buscarPorId(identificadorViaje);
     if (!viaje) throw new RecursoNoEncontrado();
-    if (viaje.pasajeroId !== actorId && !operadorAutorizado) {
+    const esPasajero = viaje.pasajeroId === actorId;
+    const esChoferAsignado = tipoCancelacion === 'CANCELLED_BY_DRIVER' &&
+      viaje.conductorId === actorId;
+    if (!esPasajero && !operadorAutorizado && !esChoferAsignado) {
       throw new OperacionNoPermitida();
     }
-    if (viaje.conductorId || ![ESTADOS.SOLICITADO, ESTADOS.DESPACHANDO].includes(viaje.estado)) {
+    const estadosCancelables = esChoferAsignado
+      ? [ESTADOS.ASIGNADO, ESTADOS.EN_ORIGEN, ESTADOS.EN_CURSO]
+      : [ESTADOS.SOLICITADO, ESTADOS.DESPACHANDO, ESTADOS.ASIGNADO, ESTADOS.EN_ORIGEN];
+    if (!estadosCancelables.includes(viaje.estado)) {
       throw new ConflictoDeEstado('El viaje ya fue asignado o no admite cancelación');
     }
-    viaje.cancelar();
+    if (tipoCancelacion === 'CANCELLED_BY_DRIVER') viaje.cancelarPorChofer();
+    else if (tipoCancelacion === 'CANCELLED_BY_PASSENGER') viaje.cancelarPorPasajero();
+    else viaje.cancelar();
     return this.guardar(viaje);
   }
 
@@ -62,6 +70,20 @@ class RepositorioViajesMemoria extends RepositorioViajes {
 
   async limpiar() {
     this.viajes.clear();
+  }
+
+  async buscarHistorialPasajero(pasajeroId) {
+    return [...this.viajes.values()].filter((viaje) => viaje.pasajeroId === pasajeroId);
+  }
+
+  async buscarHistorialConductor(conductorId) {
+    return [...this.viajes.values()].filter((viaje) => viaje.conductorId === conductorId);
+  }
+
+  async buscarEnCurso() {
+    return [...this.viajes.values()].filter((viaje) =>
+      [ESTADOS.ASIGNADO, ESTADOS.EN_ORIGEN, ESTADOS.EN_CURSO].includes(viaje.estado)
+    );
   }
 }
 

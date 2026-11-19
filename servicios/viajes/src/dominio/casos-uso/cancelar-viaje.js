@@ -37,6 +37,9 @@ class CancelarViaje {
         identificadorViaje,
         actorId: actor.identificador,
         operadorAutorizado,
+        tipoCancelacion: actor.roles?.includes('conductor')
+          ? 'CANCELLED_BY_DRIVER'
+          : 'CANCELLED',
         motivo,
         evento: this.repositorio.persisteOutbox ? evento : undefined,
         idempotencia: metadataIdempotenciaOutbox(this.repositorio, this.idempotencia, clave, huella)

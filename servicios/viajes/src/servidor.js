@@ -6,6 +6,8 @@ const { manejarErrores } = require('./infra/http/middlewares/manejo-errores');
 const { crearRutasViajes } = require('./infra/http/rutas/viajes');
 const { ErrorDeDominio } = require('./dominio/errores/errores');
 const { crearVerificadorPostgres } = require('./infra/db/verificador-postgres');
+const { CotizarViaje } = require('../../tarifas/src/cotizar-viaje');
+const { crearRutasTarifas } = require('../../tarifas/src/rutas-tarifas');
 
 function crearServidor({
   modulo,
@@ -19,7 +21,10 @@ function crearServidor({
   app.locals.modulo = moduloReal;
   app.locals.verificadorPostgres = verificadorReal;
   app.use((req, res, next) => {
-    if (req.path === '/api/v1/viajes' || req.path.startsWith('/api/v1/viajes/')) {
+    if (req.path === '/api/v1/viajes' ||
+        req.path.startsWith('/api/v1/viajes/') ||
+        req.path === '/api/v1/tarifas' ||
+        req.path.startsWith('/api/v1/tarifas/')) {
       return establecerCorrelacion(req, res, next);
     }
     return next();
@@ -46,6 +51,10 @@ function crearServidor({
   });
   app.use('/api/v1/viajes', crearRutasViajes({
     casosUso: moduloReal.casosUso,
+    autenticar: crearAutenticacionJwt(secret)
+  }));
+  app.use('/api/v1/tarifas', crearRutasTarifas({
+    cotizador: new CotizarViaje(),
     autenticar: crearAutenticacionJwt(secret)
   }));
   app.use('/api/v1/viajes', (req, res, next) => {

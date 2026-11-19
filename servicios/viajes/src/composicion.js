@@ -16,6 +16,10 @@ const { BloqueadorMemoria } = require('./infra/memoria/bloqueador-memoria');
 const { BloqueadorRedis } = require('./infra/redis/bloqueador-redis');
 const { PublicadorEventosRabbitMQ } = require('./infra/mensajeria/publicador-eventos-rabbitmq');
 const { ConsumidorDriverAssigned } = require('./infra/mensajeria/consumidor-driver-assigned');
+const { ConsultarHistorial } = require('./dominio/casos-uso/consultar-historial');
+const { ConsultarViajesEnCurso } = require('./dominio/casos-uso/consultar-viajes-en-curso');
+const { CobroSimulado } = require('../../pagos/src/cobro-simulado');
+const { RepositorioPagosMemoria } = require('../../pagos/src/repositorio-pagos-memoria');
 
 function crearPoolDb(url) {
   return url ? new Pool({ connectionString: url }) : null;
@@ -119,6 +123,9 @@ async function cerrarRecursos({ despachadorOutbox, consumidor, pool, publicador,
 }
 
 function instanciarCasosUso({ repositorio, idempotencia, publicador, bloqueador }) {
+  const cobroSimulado = new CobroSimulado({
+    repositorio: new RepositorioPagosMemoria()
+  });
   return {
     solicitar: new SolicitarViaje({ repositorio, idempotencia, publicador }),
     obtener: new ObtenerViaje({ repositorio }),
@@ -127,14 +134,17 @@ function instanciarCasosUso({ repositorio, idempotencia, publicador, bloqueador 
       repositorio,
       publicador,
       idempotencia,
-      bloqueador
+      bloqueador,
+      cobroSimulado
     }),
     aceptarAsignacion: new AceptarAsignacion({
       repositorio,
       idempotencia,
       publicador,
       bloqueador
-    })
+    }),
+    consultarHistorial: new ConsultarHistorial({ repositorio }),
+    consultarViajesEnCurso: new ConsultarViajesEnCurso({ repositorio })
   };
 }
 

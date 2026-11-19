@@ -15,6 +15,29 @@ tags:
   - name: Reservas
   - name: Pagos
 paths:
+  /api/v1/tarifas/estimacion:
+    post:
+      tags: [Viajes]
+      summary: Estimar la tarifa de un viaje
+      operationId: estimarViaje
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [origin, destination]
+              properties:
+                origin: { $ref: '#/components/schemas/Coordinates' }
+                destination: { $ref: '#/components/schemas/Coordinates' }
+      responses:
+        '200':
+          description: Cotización calculada por el servidor.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
   /api/v1/viajes:
     post:
       tags: [Viajes]
@@ -294,7 +317,7 @@ components:
         destination: { $ref: '#/components/schemas/Coordinates' }
         status:
           type: string
-          enum: [REQUESTED, DISPATCHING, ASSIGNED, DRIVER_ARRIVING, IN_PROGRESS, COMPLETED, NO_DRIVERS_AVAILABLE, CANCELLED]
+          enum: [REQUESTED, DISPATCHING, ASSIGNED, DRIVER_ARRIVING, IN_PROGRESS, COMPLETED, NO_DRIVERS_AVAILABLE, CANCELLED, CANCELLED_BY_PASSENGER, CANCELLED_BY_DRIVER]
         scheduledAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }

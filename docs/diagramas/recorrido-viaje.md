@@ -59,7 +59,7 @@ configurados y documentados; no se fijan en este diagrama.
 ## Ofertas a conductores
 
 - Cada oferta debe tener un vencimiento. El PDF sugiere un plazo de entre 15 y
-  30 segundos; el equipo debe elegir y documentar el valor.
+  30 segundos; esta implementación usa 20 segundos.
 - Si el conductor no responde antes del vencimiento, el servidor cierra esa
   oferta y la envía al siguiente candidato.
 - El vencimiento debe ocurrir aunque el conductor haya cerrado la aplicación;

@@ -167,6 +167,7 @@ class RepositorioViajesPostgres extends RepositorioViajes {
     identificadorViaje,
     actorId,
     operadorAutorizado = false,
+    tipoCancelacion = 'CANCELLED',
     motivo,
     evento,
     idempotencia
@@ -178,22 +179,26 @@ class RepositorioViajesPostgres extends RepositorioViajes {
       );
       if (bloqueado.rowCount === 0) throw new RecursoNoEncontrado();
       const actual = bloqueado.rows[0];
-      if (actual.pasajero_id !== actorId && !operadorAutorizado) {
+      const esPasajero = actual.pasajero_id === actorId;
+      const esChoferAsignado = tipoCancelacion === 'CANCELLED_BY_DRIVER' &&
+        actual.conductor_id === actorId;
+      if (!esPasajero && !operadorAutorizado && !esChoferAsignado) {
         throw new OperacionNoPermitida();
       }
-      if (actual.conductor_id !== null ||
-          !['REQUESTED', 'DISPATCHING'].includes(actual.estado)) {
+      const estadosCancelables = esChoferAsignado
+        ? ['ASSIGNED', 'DRIVER_ARRIVING', 'IN_PROGRESS']
+        : ['REQUESTED', 'DISPATCHING', 'ASSIGNED', 'DRIVER_ARRIVING'];
+      if (!estadosCancelables.includes(actual.estado)) {
         throw new ConflictoDeEstado('El viaje ya fue asignado o no admite cancelación');
       }
 
       const actualizado = await cliente.query(
         `UPDATE viajes
-            SET estado = 'CANCELLED', actualizado_en = NOW()
+            SET estado = $2, actualizado_en = NOW()
           WHERE id = $1
-            AND conductor_id IS NULL
-            AND estado IN ('REQUESTED', 'DISPATCHING')
+            AND estado = ANY($3::varchar[])
         RETURNING ${SQL_CAMPOS_VIAJE}`,
-        [identificadorViaje]
+        [identificadorViaje, tipoCancelacion, estadosCancelables]
       );
       if (actualizado.rowCount === 0) {
         throw new ConflictoDeEstado('El viaje ya fue asignado o no admite cancelación');
@@ -299,6 +304,36 @@ class RepositorioViajesPostgres extends RepositorioViajes {
       [id]
     );
     return resultado.rows;
+  }
+
+  async buscarHistorialPasajero(pasajeroId) {
+    const resultado = await this.pool.query(
+      `SELECT ${SQL_CAMPOS_VIAJE} FROM viajes
+       WHERE pasajero_id = $1
+       ORDER BY actualizado_en DESC`,
+      [pasajeroId]
+    );
+    return resultado.rows.map(convertirFila);
+  }
+
+  async buscarHistorialConductor(conductorId) {
+    const resultado = await this.pool.query(
+      `SELECT ${SQL_CAMPOS_VIAJE} FROM viajes
+       WHERE conductor_id = $1
+       ORDER BY actualizado_en DESC`,
+      [conductorId]
+    );
+    return resultado.rows.map(convertirFila);
+  }
+
+  async buscarEnCurso() {
+    const resultado = await this.pool.query(
+      `SELECT ${SQL_CAMPOS_VIAJE} FROM viajes
+       WHERE estado = ANY($1::varchar[])
+       ORDER BY actualizado_en DESC`,
+      [['ASSIGNED', 'DRIVER_ARRIVING', 'IN_PROGRESS']]
+    );
+    return resultado.rows.map(convertirFila);
   }
 }
 

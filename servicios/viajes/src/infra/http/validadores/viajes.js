@@ -76,9 +76,17 @@ function validarCancelacion(body) {
 }
 
 function validarActualizacionEstado(body) {
-  validarObjeto(body, 'body', ['status']);
+  validarObjeto(body, 'body', ['status', 'distanceKm', 'durationMinutes']);
   if (typeof body.status !== 'string') {
     throw new ErrorDeValidacion('status es obligatorio');
+  }
+  if (Object.hasOwn(body, 'distanceKm') &&
+      !esNumeroEnRango(body.distanceKm, 0, 100)) {
+    throw new ErrorDeValidacion('distanceKm debe estar entre 0 y 100');
+  }
+  if (Object.hasOwn(body, 'durationMinutes') &&
+      !esNumeroEnRango(body.durationMinutes, 0, 1440)) {
+    throw new ErrorDeValidacion('durationMinutes debe estar entre 0 y 1440');
   }
 }
 

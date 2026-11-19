@@ -9,6 +9,7 @@ const {
   metadataIdempotenciaOutbox,
   publicarYGuardar
 } = require('./idempotencia-helper');
+const { calcularTarifa, haversineKm } = require('../../../../tarifas/src/calcular-tarifa');
 
 const ESTADOS_OPERATIVOS = new Set([
   ESTADOS.EN_ORIGEN,
@@ -34,11 +35,12 @@ function actualizarFechasEvento(evento, estado, viaje) {
 }
 
 class ActualizarEstadoViaje {
-  constructor({ repositorio, publicador, idempotencia, bloqueador }) {
+  constructor({ repositorio, publicador, idempotencia, bloqueador, cobroSimulado }) {
     this.repositorio = repositorio;
     this.publicador = publicador;
     this.idempotencia = idempotencia;
     this.bloqueador = bloqueador;
+    this.cobroSimulado = cobroSimulado;
   }
 
   async ejecutar({
@@ -46,7 +48,9 @@ class ActualizarEstadoViaje {
     actor,
     estado,
     claveIdempotencia,
-    idCorrelacion
+    idCorrelacion,
+    distanciaRealKm,
+    tiempoRealMin
   }) {
     if (!ESTADOS_OPERATIVOS.has(estado)) {
       throw new ErrorDeValidacion('estado no es una transición operativa válida');
@@ -73,6 +77,29 @@ class ActualizarEstadoViaje {
       });
 
       actualizarFechasEvento(evento, estado, viaje);
+      if (estado === ESTADOS.FINALIZADO) {
+        const distanciaKm = distanciaRealKm ?? haversineKm(
+          { latitude: viaje.origen.latitud, longitude: viaje.origen.longitud },
+          { latitude: viaje.destino.latitud, longitude: viaje.destino.longitud }
+        );
+        const tarifa = calcularTarifa({
+          distanciaKm,
+          tiempoMinutos: tiempoRealMin ?? 30
+        });
+        if (evento) {
+          evento.payload.finalAmount = tarifa.amount;
+          evento.payload.currency = tarifa.currency;
+        }
+        if (this.cobroSimulado) {
+          await this.cobroSimulado.capturar({
+            tripId: viaje.identificador,
+            passengerId: viaje.pasajeroId,
+            amount: tarifa.amount,
+            currency: tarifa.currency,
+            claveIdempotencia: clave
+          });
+        }
+      }
 
       return publicarYGuardar({
         repositorio: this.repositorio,

@@ -85,7 +85,9 @@ function crearControladorViajes(casosUso) {
       validarActualizacionEstado(req.body);
       const viaje = await casosUso.actualizarEstado.ejecutar({
         ...extraerParamsEjecucion(req),
-        estado: req.body.status
+        estado: req.body.status,
+        distanciaRealKm: req.body.distanceKm,
+        tiempoRealMin: req.body.durationMinutes
       });
       return res.status(200).json(aContrato(viaje));
     },
@@ -93,6 +95,29 @@ function crearControladorViajes(casosUso) {
     aceptarAsignacion: async (req, res) => {
       const viaje = await casosUso.aceptarAsignacion.ejecutar(extraerParamsEjecucion(req));
       return res.status(200).json(aContrato(viaje));
+    },
+
+    historialPasajero: async (req, res) => {
+      const viajes = await casosUso.consultarHistorial.ejecutar({
+        actor: req.actor,
+        filtro: 'pasajero'
+      });
+      return res.status(200).json(viajes.map(aContrato));
+    },
+
+    historialConductor: async (req, res) => {
+      const viajes = await casosUso.consultarHistorial.ejecutar({
+        actor: req.actor,
+        filtro: 'conductor'
+      });
+      return res.status(200).json(viajes.map(aContrato));
+    },
+
+    viajesEnCurso: async (req, res) => {
+      const viajes = await casosUso.consultarViajesEnCurso.ejecutar({
+        actor: req.actor
+      });
+      return res.status(200).json(viajes.map(aContrato));
     }
   };
 }

@@ -1,10 +1,11 @@
 const crypto = require('node:crypto');
 const { Viaje } = require('../entidades/viaje');
-const { ErrorDeValidacion, ConflictoDeEstado } = require('../errores/errores');
-
-function huella(datos) {
-  return JSON.stringify(datos);
-}
+const {
+  validarClaveYCorrelacion,
+  verificarIdempotencia,
+  metadataIdempotenciaOutbox,
+  publicarYGuardar
+} = require('./idempotencia-helper');
 
 class SolicitarViaje {
   constructor({ repositorio, idempotencia, publicador }) {
@@ -14,19 +15,14 @@ class SolicitarViaje {
   }
 
   async ejecutar({ pasajeroId, origen, destino, fechaProgramada = null, claveIdempotencia, idCorrelacion }) {
-    if (!claveIdempotencia || !idCorrelacion) {
-      throw new ErrorDeValidacion('claveIdempotencia e idCorrelacion son obligatorios');
-    }
+    validarClaveYCorrelacion(claveIdempotencia, idCorrelacion);
     const datos = { pasajeroId, origen, destino, fechaProgramada };
     const clave = `${pasajeroId}:${claveIdempotencia}`;
-    const anterior = await this.idempotencia.buscar(clave);
-    const huellaActual = huella(datos);
-    if (anterior) {
-      if (anterior.huella !== huellaActual) {
-        throw new ConflictoDeEstado('La clave de idempotencia fue reutilizada con otro request');
-      }
-      return anterior.respuesta;
-    }
+    const huellaActual = JSON.stringify(datos);
+
+    const idempotente = await verificarIdempotencia(this.idempotencia, clave, huellaActual);
+    if (idempotente.procesado) return idempotente.respuesta;
+
     const viaje = new Viaje({ identificador: crypto.randomUUID(), ...datos });
     const evento = this.publicador.crearEvento('TripRequested', {
       tripId: viaje.identificador,
@@ -34,19 +30,22 @@ class SolicitarViaje {
       origin: { latitude: viaje.origen.latitud, longitude: viaje.origen.longitud, address: viaje.origen.direccion },
       destination: { latitude: viaje.destino.latitud, longitude: viaje.destino.longitud, address: viaje.destino.direccion }
     }, { idCorrelacion });
+
     await this.repositorio.guardar(
       viaje,
       this.repositorio.persisteOutbox ? evento : undefined,
-      this.repositorio.persisteOutbox ? {
-        clave,
-        huella: huellaActual,
-        tiempoVidaMs: this.idempotencia.tiempoVidaMs
-      } : undefined
+      metadataIdempotenciaOutbox(this.repositorio, this.idempotencia, clave, huellaActual)
     );
-    if (!this.repositorio.persisteOutbox) await this.publicador.publicar(evento);
-    const respuesta = viaje.toJSON();
-    await this.idempotencia.guardar(clave, huellaActual, respuesta);
-    return respuesta;
+
+    return publicarYGuardar({
+      repositorio: this.repositorio,
+      publicador: this.publicador,
+      idempotencia: this.idempotencia,
+      evento,
+      clave,
+      huella: huellaActual,
+      respuesta: viaje.toJSON()
+    });
   }
 }
 

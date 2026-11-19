@@ -1,9 +1,12 @@
 const { DependenciaNoDisponible } = require('../../dominio/errores/errores');
 const { crearEvento } = require('./evento');
-
-const EXCHANGE_EVENTOS = 'appurbe.events';
-const EXCHANGE_ERRORES = 'appurbe.events.dlx';
-const COLA_ERRORES = 'viajes.events.dlq';
+const {
+  EXCHANGE_EVENTOS,
+  EXCHANGE_ERRORES,
+  COLA_ERRORES,
+  asegurarTopologiaBase,
+  cerrarRecursosAmqp
+} = require('./rabbitmq-comun');
 
 const ROUTING_KEYS = Object.freeze({
   TripRequested: 'trip.requested.v1',
@@ -71,10 +74,7 @@ class PublicadorEventosRabbitMQ {
         this.conexion = null;
       });
       const canal = await this.conexion.createConfirmChannel();
-      await canal.assertExchange(EXCHANGE_EVENTOS, 'topic', { durable: true });
-      await canal.assertExchange(EXCHANGE_ERRORES, 'direct', { durable: true });
-      await canal.assertQueue(COLA_ERRORES, { durable: true });
-      await canal.bindQueue(COLA_ERRORES, EXCHANGE_ERRORES, COLA_ERRORES);
+      await asegurarTopologiaBase(canal);
       this.canal = canal;
     } catch {
       await this.cerrarConexion();
@@ -131,20 +131,7 @@ class PublicadorEventosRabbitMQ {
     const conexion = this.conexion;
     this.canal = null;
     this.conexion = null;
-    if (canal) {
-      try {
-        await canal.close();
-      } catch (error) {
-        if (error.code !== 'CHANNEL_CLOSED') throw error;
-      }
-    }
-    if (conexion) {
-      try {
-        await conexion.close();
-      } catch (error) {
-        if (error.code !== 'CONNECTION_FORCED' && error.code !== 'CHANNEL_CLOSED') throw error;
-      }
-    }
+    await cerrarRecursosAmqp(canal, conexion);
   }
 
   async cerrar() {

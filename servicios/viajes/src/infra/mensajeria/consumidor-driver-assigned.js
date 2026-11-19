@@ -4,12 +4,14 @@ const {
 } = require('../../dominio/errores/errores');
 const {
   EXCHANGE_EVENTOS,
-  EXCHANGE_ERRORES
-} = require('./publicador-eventos-rabbitmq');
+  EXCHANGE_ERRORES,
+  COLA_ERRORES,
+  asegurarTopologiaBase,
+  cerrarRecursosAmqp
+} = require('./rabbitmq-comun');
 
 const COLA_DRIVER_ASSIGNED = 'viajes.driver-assigned';
 const COLA_REINTENTOS = 'viajes.driver-assigned.retry';
-const COLA_ERRORES = 'viajes.events.dlq';
 
 function validarEvento(evento) {
   if (!evento || evento.eventType !== 'DriverAssigned' || evento.eventVersion !== 1) {
@@ -18,6 +20,40 @@ function validarEvento(evento) {
   validarUuid(evento.eventId, 'eventId');
   validarUuid(evento.payload?.tripId, 'tripId');
   validarUuid(evento.payload?.driverId, 'driverId');
+}
+
+async function reenviarMensajeFallido(canal, mensaje, error, maxIntentos) {
+  const reintentos = Number(mensaje.properties.headers?.['x-retry-count'] || 0);
+  try {
+    if (reintentos < maxIntentos) {
+      canal.sendToQueue(COLA_REINTENTOS, mensaje.content, {
+        persistent: true,
+        contentType: 'application/json',
+        headers: {
+          ...mensaje.properties.headers,
+          'x-retry-count': reintentos + 1
+        }
+      });
+    } else {
+      canal.publish(EXCHANGE_ERRORES, COLA_ERRORES, mensaje.content, {
+        persistent: true,
+        contentType: 'application/json',
+        headers: {
+          ...mensaje.properties.headers,
+          'x-final-error': error.code || error.name
+        }
+      });
+    }
+    await canal.waitForConfirms();
+    canal.ack(mensaje);
+  } catch (errorPublicacion) {
+    try {
+      canal.nack(mensaje, false, true);
+    } catch (errorRechazo) {
+      console.error('El canal RabbitMQ se cerró antes de reenviar el mensaje', errorRechazo.name);
+    }
+    console.error('No se pudo enrutar el mensaje fallido', errorPublicacion.name);
+  }
 }
 
 class ConsumidorDriverAssigned {
@@ -48,6 +84,26 @@ class ConsumidorDriverAssigned {
     await this.inicializando;
   }
 
+  async configurarColas(canal) {
+    await asegurarTopologiaBase(canal);
+    await canal.assertQueue(COLA_DRIVER_ASSIGNED, {
+      durable: true,
+      arguments: {
+        'x-dead-letter-exchange': EXCHANGE_ERRORES,
+        'x-dead-letter-routing-key': COLA_ERRORES
+      }
+    });
+    await canal.assertQueue(COLA_REINTENTOS, {
+      durable: true,
+      arguments: {
+        'x-message-ttl': 1000,
+        'x-dead-letter-exchange': EXCHANGE_EVENTOS,
+        'x-dead-letter-routing-key': 'trip.driver-assigned.v1'
+      }
+    });
+    await canal.bindQueue(COLA_DRIVER_ASSIGNED, EXCHANGE_EVENTOS, 'trip.driver-assigned.v1');
+  }
+
   async conectar() {
     try {
       this.conexion = await this.amqp.connect(this.url, { timeout: 3000 });
@@ -62,26 +118,7 @@ class ConsumidorDriverAssigned {
         this.programarReconexion();
       });
       this.canal = await this.conexion.createConfirmChannel();
-      await this.canal.assertExchange(EXCHANGE_EVENTOS, 'topic', { durable: true });
-      await this.canal.assertExchange(EXCHANGE_ERRORES, 'direct', { durable: true });
-      await this.canal.assertQueue(COLA_ERRORES, { durable: true });
-      await this.canal.bindQueue(COLA_ERRORES, EXCHANGE_ERRORES, COLA_ERRORES);
-      await this.canal.assertQueue(COLA_DRIVER_ASSIGNED, {
-        durable: true,
-        arguments: {
-          'x-dead-letter-exchange': EXCHANGE_ERRORES,
-          'x-dead-letter-routing-key': COLA_ERRORES
-        }
-      });
-      await this.canal.assertQueue(COLA_REINTENTOS, {
-        durable: true,
-        arguments: {
-          'x-message-ttl': 1000,
-          'x-dead-letter-exchange': EXCHANGE_EVENTOS,
-          'x-dead-letter-routing-key': 'trip.driver-assigned.v1'
-        }
-      });
-      await this.canal.bindQueue(COLA_DRIVER_ASSIGNED, EXCHANGE_EVENTOS, 'trip.driver-assigned.v1');
+      await this.configurarColas(this.canal);
       this.canal.prefetch(1);
       const resultado = await this.canal.consume(
         COLA_DRIVER_ASSIGNED,
@@ -111,9 +148,7 @@ class ConsumidorDriverAssigned {
   }
 
   async procesar(mensaje) {
-    if (!mensaje) return;
-    const canal = this.canal;
-    if (!canal) return;
+    if (!mensaje || !this.canal) return;
     try {
       const evento = JSON.parse(mensaje.content.toString('utf8'));
       validarEvento(evento);
@@ -122,39 +157,9 @@ class ConsumidorDriverAssigned {
         identificadorViaje: evento.payload.tripId,
         conductorId: evento.payload.driverId
       });
-      canal.ack(mensaje);
+      this.canal.ack(mensaje);
     } catch (error) {
-      const reintentos = Number(mensaje.properties.headers?.['x-retry-count'] || 0);
-      try {
-        if (reintentos < this.maxIntentos) {
-          canal.sendToQueue(COLA_REINTENTOS, mensaje.content, {
-            persistent: true,
-            contentType: 'application/json',
-            headers: {
-              ...mensaje.properties.headers,
-              'x-retry-count': reintentos + 1
-            }
-          });
-        } else {
-          canal.publish(EXCHANGE_ERRORES, COLA_ERRORES, mensaje.content, {
-            persistent: true,
-            contentType: 'application/json',
-            headers: {
-              ...mensaje.properties.headers,
-              'x-final-error': error.code || error.name
-            }
-          });
-        }
-        await canal.waitForConfirms();
-        canal.ack(mensaje);
-      } catch (errorPublicacion) {
-        try {
-          canal.nack(mensaje, false, true);
-        } catch (errorRechazo) {
-          console.error('El canal RabbitMQ se cerró antes de reenviar el mensaje', errorRechazo.name);
-        }
-        console.error('No se pudo enrutar el mensaje fallido', errorPublicacion.name);
-      }
+      await reenviarMensajeFallido(this.canal, mensaje, error, this.maxIntentos);
     }
   }
 
@@ -164,8 +169,7 @@ class ConsumidorDriverAssigned {
     this.canal = null;
     this.conexion = null;
     this.consumerTag = null;
-    if (canal) await canal.close();
-    if (conexion) await conexion.close();
+    await cerrarRecursosAmqp(canal, conexion);
   }
 
   async cerrar() {

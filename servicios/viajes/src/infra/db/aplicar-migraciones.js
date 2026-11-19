@@ -4,7 +4,7 @@ const { ejecutarEnTransaccion } = require('./transaccion');
 
 const DIRECTORIO_MIGRACIONES = path.resolve(
   __dirname,
-  '../../../../infraestructura/postgres/migrations'
+  '../../../../../infraestructura/postgres/migrations'
 );
 
 async function aplicarMigraciones(pool) {

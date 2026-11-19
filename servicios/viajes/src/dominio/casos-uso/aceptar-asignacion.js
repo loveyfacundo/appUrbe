@@ -1,10 +1,13 @@
-const { performance } = require('node:perf_hooks');
 const {
   ErrorDeValidacion,
-  OperacionNoPermitida,
-  ConflictoDeEstado
+  OperacionNoPermitida
 } = require('../errores/errores');
-const { validarUuid } = require('../entidades/viaje');
+const {
+  validarClaveYCorrelacion,
+  verificarIdempotencia,
+  metadataIdempotenciaOutbox,
+  publicarYGuardar
+} = require('./idempotencia-helper');
 
 class AceptarAsignacion {
   constructor({ repositorio, idempotencia, publicador, bloqueador }) {
@@ -20,46 +23,41 @@ class AceptarAsignacion {
     claveIdempotencia,
     idCorrelacion
   }) {
-    validarUuid(identificadorViaje, 'tripId');
-    if (!actor || !Array.isArray(actor.roles) || !actor.roles.includes('conductor')) {
-      throw new OperacionNoPermitida('Solo un conductor puede aceptar una asignación');
+    if (!actor || !actor.roles?.includes('conductor')) {
+      throw new OperacionNoPermitida('Solo un conductor puede aceptar viajes');
     }
-    validarUuid(actor.identificador, 'actor.identificador');
-    if (!claveIdempotencia || !idCorrelacion) {
-      throw new ErrorDeValidacion('claveIdempotencia e idCorrelacion son obligatorios');
-    }
+    validarClaveYCorrelacion(claveIdempotencia, idCorrelacion);
 
     const clave = `${actor.identificador}:${claveIdempotencia}`;
     const huella = JSON.stringify({ identificadorViaje, conductorId: actor.identificador });
-    return this.bloqueador.ejecutar(`idempotencia:${clave}`, async () => {
+
+    return this.bloqueador.ejecutar(`viaje:${identificadorViaje}`, async () => {
       const inicio = performance.now();
       try {
-        const anterior = await this.idempotencia.buscar(clave);
-        if (anterior) {
-          if (anterior.huella !== huella) {
-            throw new ConflictoDeEstado('La clave de idempotencia fue reutilizada con otro request');
-          }
-          return anterior.respuesta;
-        }
+        const idempotente = await verificarIdempotencia(this.idempotencia, clave, huella);
+        if (idempotente.procesado) return idempotente.respuesta;
 
         const evento = this.publicador.crearEvento('DriverAssigned', {
           tripId: identificadorViaje,
           driverId: actor.identificador
         }, { idCorrelacion });
+
         const viaje = await this.repositorio.asignarConductor({
           identificadorViaje,
           conductorId: actor.identificador,
           evento: this.repositorio.persisteOutbox ? evento : undefined,
-          idempotencia: this.repositorio.persisteOutbox ? {
-            clave,
-            huella,
-            tiempoVidaMs: this.idempotencia.tiempoVidaMs
-          } : undefined
+          idempotencia: metadataIdempotenciaOutbox(this.repositorio, this.idempotencia, clave, huella)
         });
-        const respuesta = viaje.toJSON();
-        if (!this.repositorio.persisteOutbox) await this.publicador.publicar(evento);
-        await this.idempotencia.guardar(clave, huella, respuesta);
-        return respuesta;
+
+        return await publicarYGuardar({
+          repositorio: this.repositorio,
+          publicador: this.publicador,
+          idempotencia: this.idempotencia,
+          evento,
+          clave,
+          huella,
+          respuesta: viaje.toJSON()
+        });
       } finally {
         console.info(JSON.stringify({
           metric: 'trip_assignment_duration_ms',

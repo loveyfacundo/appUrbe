@@ -1,13 +1,31 @@
 const { RepositorioViajes } = require('../../dominio/puertos/repositorio-viajes');
-const { Viaje } = require('../../dominio/entidades/viaje');
+const { Viaje, ESTADOS } = require('../../dominio/entidades/viaje');
 const { ejecutarEnTransaccion } = require('./transaccion');
 const {
   ConflictoDeEstado,
   RecursoNoEncontrado,
   OperacionNoPermitida
 } = require('../../dominio/errores/errores');
-const { ESTADOS } = require('../../dominio/entidades/viaje');
 const { agregarEventoOutbox } = require('./outbox');
+
+const SQL_CAMPOS_VIAJE = 'id, pasajero_id, conductor_id, origen, destino, fecha_programada, estado, creado_en, actualizado_en';
+
+const SQL_ASIGNAR_CONDUCTOR = `
+  UPDATE viajes
+     SET conductor_id = $2, estado = 'ASSIGNED', actualizado_en = NOW()
+   WHERE id = $1
+     AND conductor_id IS NULL
+     AND estado IN ('REQUESTED', 'DISPATCHING')
+  RETURNING ${SQL_CAMPOS_VIAJE}
+`;
+
+async function registrarHistorial(cliente, { viajeId, estado, actorId = null, ocurridoEn }) {
+  await cliente.query(
+    `INSERT INTO historial_estados_viaje (viaje_id, estado, actor_id, ocurrido_en)
+     VALUES ($1, $2, $3, $4)`,
+    [viajeId, estado, actorId, ocurridoEn]
+  );
+}
 
 async function guardarIdempotenciaTransaccional(cliente, idempotencia, respuesta) {
   if (!idempotencia) return;
@@ -40,6 +58,13 @@ function convertirFila(fila) {
     creadoEn: new Date(fila.creado_en).toISOString(),
     actualizadoEn: new Date(fila.actualizado_en).toISOString()
   });
+}
+
+function sincronizarEvento(evento, viaje, estado) {
+  if (!evento) return;
+  evento.payload.status = viaje.estado;
+  if (estado === ESTADOS.EN_CURSO) evento.payload.startedAt = viaje.actualizadoEn;
+  if (estado === ESTADOS.FINALIZADO) evento.payload.completedAt = viaje.actualizadoEn;
 }
 
 class RepositorioViajesPostgres extends RepositorioViajes {
@@ -82,19 +107,15 @@ class RepositorioViajesPostgres extends RepositorioViajes {
         ]
       );
       if (!anterior.rows[0] || anterior.rows[0].estado !== viaje.estado) {
-        await cliente.query(
-          `INSERT INTO historial_estados_viaje (viaje_id, estado, ocurrido_en)
-           VALUES ($1, $2, $3)`,
-          [viaje.identificador, viaje.estado, viaje.actualizadoEn]
-        );
+        await registrarHistorial(cliente, {
+          viajeId: viaje.identificador,
+          estado: viaje.estado,
+          ocurridoEn: viaje.actualizadoEn
+        });
       }
       await agregarEventoOutbox(cliente, evento);
       if (idempotencia) {
-        await guardarIdempotenciaTransaccional(
-          cliente,
-          idempotencia,
-          viaje.toJSON()
-        );
+        await guardarIdempotenciaTransaccional(cliente, idempotencia, viaje.toJSON());
       }
     });
     return viaje;
@@ -102,10 +123,7 @@ class RepositorioViajesPostgres extends RepositorioViajes {
 
   async buscarPorId(id) {
     const resultado = await this.pool.query(
-      `SELECT id, pasajero_id, conductor_id, origen, destino, fecha_programada,
-              estado, creado_en, actualizado_en
-         FROM viajes
-        WHERE id = $1`,
+      `SELECT ${SQL_CAMPOS_VIAJE} FROM viajes WHERE id = $1`,
       [id]
     );
     return convertirFila(resultado.rows[0]);
@@ -113,16 +131,15 @@ class RepositorioViajesPostgres extends RepositorioViajes {
 
   async asignarConductor({ identificadorViaje, conductorId, evento, idempotencia }) {
     return ejecutarEnTransaccion(this.pool, async (cliente) => {
-      const resultado = await cliente.query(
-        `UPDATE viajes
-            SET conductor_id = $2, estado = 'ASSIGNED', actualizado_en = NOW()
-          WHERE id = $1
-            AND conductor_id IS NULL
-            AND estado IN ('REQUESTED', 'DISPATCHING')
-        RETURNING id, pasajero_id, conductor_id, origen, destino, fecha_programada,
-                  estado, creado_en, actualizado_en`,
-        [identificadorViaje, conductorId]
-      );
+      let resultado;
+      try {
+        resultado = await cliente.query(SQL_ASIGNAR_CONDUCTOR, [identificadorViaje, conductorId]);
+      } catch (error) {
+        if (error.code === '23505' && error.constraint === 'viajes_un_conductor_activo_idx') {
+          throw new ConflictoDeEstado('El conductor ya tiene un viaje activo');
+        }
+        throw error;
+      }
       if (resultado.rowCount === 0) {
         const existente = await cliente.query(
           'SELECT id, estado FROM viajes WHERE id = $1',
@@ -133,11 +150,61 @@ class RepositorioViajesPostgres extends RepositorioViajes {
       }
 
       const fila = resultado.rows[0];
-      await cliente.query(
-        `INSERT INTO historial_estados_viaje (viaje_id, estado, actor_id, ocurrido_en)
-         VALUES ($1, $2, $3, $4)`,
-        [fila.id, fila.estado, conductorId, fila.actualizado_en]
+      await registrarHistorial(cliente, {
+        viajeId: fila.id,
+        estado: fila.estado,
+        actorId: conductorId,
+        ocurridoEn: fila.actualizado_en
+      });
+      await agregarEventoOutbox(cliente, evento);
+      const viaje = convertirFila(fila);
+      await guardarIdempotenciaTransaccional(cliente, idempotencia, viaje.toJSON());
+      return viaje;
+    });
+  }
+
+  async cancelarViaje({
+    identificadorViaje,
+    actorId,
+    operadorAutorizado = false,
+    motivo,
+    evento,
+    idempotencia
+  }) {
+    return ejecutarEnTransaccion(this.pool, async (cliente) => {
+      const bloqueado = await cliente.query(
+        `SELECT ${SQL_CAMPOS_VIAJE} FROM viajes WHERE id = $1 FOR UPDATE`,
+        [identificadorViaje]
       );
+      if (bloqueado.rowCount === 0) throw new RecursoNoEncontrado();
+      const actual = bloqueado.rows[0];
+      if (actual.pasajero_id !== actorId && !operadorAutorizado) {
+        throw new OperacionNoPermitida();
+      }
+      if (actual.conductor_id !== null ||
+          !['REQUESTED', 'DISPATCHING'].includes(actual.estado)) {
+        throw new ConflictoDeEstado('El viaje ya fue asignado o no admite cancelación');
+      }
+
+      const actualizado = await cliente.query(
+        `UPDATE viajes
+            SET estado = 'CANCELLED', actualizado_en = NOW()
+          WHERE id = $1
+            AND conductor_id IS NULL
+            AND estado IN ('REQUESTED', 'DISPATCHING')
+        RETURNING ${SQL_CAMPOS_VIAJE}`,
+        [identificadorViaje]
+      );
+      if (actualizado.rowCount === 0) {
+        throw new ConflictoDeEstado('El viaje ya fue asignado o no admite cancelación');
+      }
+      const fila = actualizado.rows[0];
+      await registrarHistorial(cliente, {
+        viajeId: identificadorViaje,
+        estado: fila.estado,
+        actorId,
+        ocurridoEn: fila.actualizado_en
+      });
       await agregarEventoOutbox(cliente, evento);
       const viaje = convertirFila(fila);
       await guardarIdempotenciaTransaccional(cliente, idempotencia, viaje.toJSON());
@@ -154,11 +221,7 @@ class RepositorioViajesPostgres extends RepositorioViajes {
   }) {
     return ejecutarEnTransaccion(this.pool, async (cliente) => {
       const resultado = await cliente.query(
-        `SELECT id, pasajero_id, conductor_id, origen, destino, fecha_programada,
-                estado, creado_en, actualizado_en
-           FROM viajes
-          WHERE id = $1
-          FOR UPDATE`,
+        `SELECT ${SQL_CAMPOS_VIAJE} FROM viajes WHERE id = $1 FOR UPDATE`,
         [identificadorViaje]
       );
       if (resultado.rowCount === 0) throw new RecursoNoEncontrado();
@@ -170,31 +233,24 @@ class RepositorioViajesPostgres extends RepositorioViajes {
       if (estado === ESTADOS.EN_ORIGEN) viaje.llegarAlOrigen(actorId);
       if (estado === ESTADOS.EN_CURSO) viaje.iniciarEnCurso(actorId);
       if (estado === ESTADOS.FINALIZADO) viaje.finalizar(actorId);
+
       const actualizado = await cliente.query(
         `UPDATE viajes
             SET estado = $2, actualizado_en = $3
           WHERE id = $1
-        RETURNING id, pasajero_id, conductor_id, origen, destino, fecha_programada,
-                  estado, creado_en, actualizado_en`,
+        RETURNING ${SQL_CAMPOS_VIAJE}`,
         [identificadorViaje, viaje.estado, viaje.actualizadoEn]
       );
-      await cliente.query(
-        `INSERT INTO historial_estados_viaje (viaje_id, estado, actor_id, ocurrido_en)
-         VALUES ($1, $2, $3, $4)`,
-        [identificadorViaje, viaje.estado, actorId, viaje.actualizadoEn]
-      );
-      if (evento) {
-        evento.payload.status = viaje.estado;
-        if (estado === ESTADOS.EN_CURSO) evento.payload.startedAt = viaje.actualizadoEn;
-        if (estado === ESTADOS.FINALIZADO) evento.payload.completedAt = viaje.actualizadoEn;
-      }
+      await registrarHistorial(cliente, {
+        viajeId: identificadorViaje,
+        estado: viaje.estado,
+        actorId,
+        ocurridoEn: viaje.actualizadoEn
+      });
+      sincronizarEvento(evento, viaje, estado);
       await agregarEventoOutbox(cliente, evento);
       const viajeActualizado = convertirFila(actualizado.rows[0]);
-      await guardarIdempotenciaTransaccional(
-        cliente,
-        idempotencia,
-        viajeActualizado.toJSON()
-      );
+      await guardarIdempotenciaTransaccional(cliente, idempotencia, viajeActualizado.toJSON());
       return viajeActualizado;
     });
   }
@@ -210,15 +266,7 @@ class RepositorioViajesPostgres extends RepositorioViajes {
       );
       if (registrado.rowCount === 0) return { duplicado: true };
 
-      const asignado = await cliente.query(
-        `UPDATE viajes
-            SET conductor_id = $2, estado = 'ASSIGNED', actualizado_en = NOW()
-          WHERE id = $1
-            AND conductor_id IS NULL
-            AND estado IN ('REQUESTED', 'DISPATCHING')
-        RETURNING id, estado, actualizado_en`,
-        [identificadorViaje, conductorId]
-      );
+      const asignado = await cliente.query(SQL_ASIGNAR_CONDUCTOR, [identificadorViaje, conductorId]);
       if (asignado.rowCount === 0) {
         const existente = await cliente.query(
           'SELECT estado, conductor_id FROM viajes WHERE id = $1',
@@ -232,11 +280,12 @@ class RepositorioViajesPostgres extends RepositorioViajes {
         throw new ConflictoDeEstado('La asignación del evento no coincide con el estado del viaje');
       }
 
-      await cliente.query(
-        `INSERT INTO historial_estados_viaje (viaje_id, estado, actor_id, ocurrido_en)
-         VALUES ($1, 'ASSIGNED', $2, $3)`,
-        [identificadorViaje, conductorId, asignado.rows[0].actualizado_en]
-      );
+      await registrarHistorial(cliente, {
+        viajeId: identificadorViaje,
+        estado: 'ASSIGNED',
+        actorId: conductorId,
+        ocurridoEn: asignado.rows[0].actualizado_en
+      });
       return { duplicado: false };
     });
   }

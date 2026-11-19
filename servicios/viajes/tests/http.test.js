@@ -14,23 +14,29 @@ const ubicaciones = {
   destination: { latitude: -34.6158, longitude: -58.4333, address: 'Palermo, CABA' }
 };
 
-function codificar(valor) {
-  return Buffer.from(JSON.stringify(valor)).toString('base64url');
-}
+const { crearTokenParaTest } = require('./test-jwt');
 
 function crearToken(sub, extra = {}) {
-  const header = codificar({ alg: 'HS256', typ: 'JWT' });
-  const payload = codificar({
-    sub,
-    roles: ['pasajero'],
-    exp: Math.floor(Date.now() / 1000) + 60,
-    ...extra
+  return crearTokenParaTest(sub, extra, SECRET);
+}
+
+function crearViajeRequest(baseUrl, opciones = {}) {
+  return fetch(`${baseUrl}/api/v1/viajes`, {
+    method: 'POST',
+    headers: { ...headers(), 'idempotency-key': claveIdempotencia, ...opciones.headers },
+    body: opciones.body !== undefined ? opciones.body : JSON.stringify(ubicaciones)
   });
-  const firma = crypto
-    .createHmac('sha256', SECRET)
-    .update(`${header}.${payload}`)
-    .digest('base64url');
-  return `${header}.${payload}.${firma}`;
+}
+
+function cambiarEstadoRequest(baseUrl, tripId, token, idempotencyKey, status) {
+  return fetch(`${baseUrl}/api/v1/viajes/${tripId}/estado`, {
+    method: 'PATCH',
+    headers: {
+      ...headers(token),
+      'idempotency-key': idempotencyKey
+    },
+    body: JSON.stringify({ status })
+  });
 }
 
 async function iniciarApp(t, opciones = {}) {
@@ -57,11 +63,7 @@ function headers(token = crearToken(pasajeroId)) {
 
 test('HTTP crea, consulta y cancela viajes según el contrato', async (t) => {
   const baseUrl = await iniciarApp(t);
-  const crear = await fetch(`${baseUrl}/api/v1/viajes`, {
-    method: 'POST',
-    headers: { ...headers(), 'idempotency-key': claveIdempotencia },
-    body: JSON.stringify(ubicaciones)
-  });
+  const crear = await crearViajeRequest(baseUrl);
   assert.equal(crear.status, 201);
   assert.equal(crear.headers.get('x-correlation-id'), correlationId);
   const viaje = await crear.json();
@@ -69,11 +71,7 @@ test('HTTP crea, consulta y cancela viajes según el contrato', async (t) => {
   assert.equal(viaje.status, 'REQUESTED');
   assert.equal(viaje.origin.latitude, ubicaciones.origin.latitude);
 
-  const reintento = await fetch(`${baseUrl}/api/v1/viajes`, {
-    method: 'POST',
-    headers: { ...headers(), 'idempotency-key': claveIdempotencia },
-    body: JSON.stringify(ubicaciones)
-  });
+  const reintento = await crearViajeRequest(baseUrl);
   assert.equal(reintento.status, 201);
   assert.deepEqual(await reintento.json(), viaje);
 
@@ -145,11 +143,7 @@ test('HTTP rechaza tokens ausentes, inválidos y actores sin permiso', async (t)
   });
   assert.equal(tokenInvalido.status, 401);
 
-  const crear = await fetch(`${baseUrl}/api/v1/viajes`, {
-    method: 'POST',
-    headers: { ...headers(), 'idempotency-key': claveIdempotencia },
-    body: JSON.stringify(ubicaciones)
-  });
+  const crear = await crearViajeRequest(baseUrl);
   const viaje = await crear.json();
   const noAutorizado = await fetch(`${baseUrl}/api/v1/viajes/${viaje.id}`, {
     headers: headers(crearToken(otroUsuarioId))
@@ -160,11 +154,7 @@ test('HTTP rechaza tokens ausentes, inválidos y actores sin permiso', async (t)
 
 test('HTTP permite cancelar a un operador solo con el permiso del contrato', async (t) => {
   const baseUrl = await iniciarApp(t);
-  const crear = await fetch(`${baseUrl}/api/v1/viajes`, {
-    method: 'POST',
-    headers: { ...headers(), 'idempotency-key': claveIdempotencia },
-    body: JSON.stringify(ubicaciones)
-  });
+  const crear = await crearViajeRequest(baseUrl);
   const viaje = await crear.json();
   const operador = crearToken(otroUsuarioId, {
     roles: ['operador'],
@@ -277,35 +267,34 @@ test('HTTP permite al conductor asignado avanzar el estado operativo', async (t)
   });
   assert.equal(respuesta.status, 200);
   assert.equal((await respuesta.json()).status, 'DRIVER_ARRIVING');
-  const iniciar = await fetch(`${baseUrl}/api/v1/viajes/${creado.identificador}/estado`, {
-    method: 'PATCH',
-    headers: {
-      ...headers(token),
-      'idempotency-key': '7a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765'
-    },
-    body: JSON.stringify({ status: 'IN_PROGRESS' })
-  });
+  const iniciar = await cambiarEstadoRequest(
+    baseUrl,
+    creado.identificador,
+    token,
+    '7a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765',
+    'IN_PROGRESS'
+  );
   assert.equal(iniciar.status, 200);
   const viajeIniciado = await iniciar.json();
   assert.equal(viajeIniciado.status, 'IN_PROGRESS');
-  const iniciarRepetido = await fetch(`${baseUrl}/api/v1/viajes/${creado.identificador}/estado`, {
-    method: 'PATCH',
-    headers: {
-      ...headers(token),
-      'idempotency-key': '7a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765'
-    },
-    body: JSON.stringify({ status: 'IN_PROGRESS' })
-  });
+
+  const iniciarRepetido = await cambiarEstadoRequest(
+    baseUrl,
+    creado.identificador,
+    token,
+    '7a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765',
+    'IN_PROGRESS'
+  );
   assert.equal(iniciarRepetido.status, 200);
   assert.deepEqual(await iniciarRepetido.json(), viajeIniciado);
-  const completar = await fetch(`${baseUrl}/api/v1/viajes/${creado.identificador}/estado`, {
-    method: 'PATCH',
-    headers: {
-      ...headers(token),
-      'idempotency-key': '8a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765'
-    },
-    body: JSON.stringify({ status: 'COMPLETED' })
-  });
+
+  const completar = await cambiarEstadoRequest(
+    baseUrl,
+    creado.identificador,
+    token,
+    '8a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765',
+    'COMPLETED'
+  );
   assert.equal(completar.status, 200);
   const viajeCompletado = await completar.json();
   assert.equal(viajeCompletado.status, 'COMPLETED');

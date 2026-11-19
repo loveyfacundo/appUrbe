@@ -35,7 +35,8 @@ test('aplica migraciones ordenadas y registra cada archivo', async () => {
     '001-viajes-idempotencia.sql',
     '002-esquema-plataforma.sql',
     '003-eventos-procesados.sql',
-    '004-eventos-outbox.sql'
+    '004-eventos-outbox.sql',
+    '005-invariantes-concurrencia.sql'
   ]);
   assert.ok(consultas.some(({ texto }) => texto.includes('CREATE TABLE IF NOT EXISTS eventos_procesados')));
   assert.ok(consultas.some(({ texto }) => texto.includes('CREATE TABLE IF NOT EXISTS eventos_outbox')));

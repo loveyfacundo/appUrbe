@@ -27,6 +27,21 @@ const TRANSICIONES = Object.freeze({
   [ESTADOS.CANCELADO]: []
 });
 
+function esRangoValido(val, min, max) {
+  return typeof val === 'number' && Number.isFinite(val) && val >= min && val <= max;
+}
+
+function esTextoValido(val, min, max) {
+  return typeof val === 'string' && val.trim().length >= min && val.length <= max;
+}
+
+function esFechaIsoValida(fecha) {
+  if (fecha === null) return true;
+  return typeof fecha === 'string' &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(fecha) &&
+    !Number.isNaN(Date.parse(fecha));
+}
+
 function validarUuid(valor, campo) {
   if (typeof valor !== 'string' ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(valor)) {
@@ -39,13 +54,13 @@ function validarUbicacion(ubicacion, campo) {
     throw new ErrorDeValidacion(`${campo} es obligatoria`, [{ campo, regla: 'required' }]);
   }
   const { latitud, longitud, direccion } = ubicacion;
-  if (typeof latitud !== 'number' || latitud < -90 || latitud > 90) {
+  if (!esRangoValido(latitud, -90, 90)) {
     throw new ErrorDeValidacion(`${campo}.latitud debe estar entre -90 y 90`);
   }
-  if (typeof longitud !== 'number' || longitud < -180 || longitud > 180) {
+  if (!esRangoValido(longitud, -180, 180)) {
     throw new ErrorDeValidacion(`${campo}.longitud debe estar entre -180 y 180`);
   }
-  if (typeof direccion !== 'string' || direccion.trim().length < 3 || direccion.length > 200) {
+  if (!esTextoValido(direccion, 3, 200)) {
     throw new ErrorDeValidacion(`${campo}.direccion debe tener entre 3 y 200 caracteres`);
   }
 }
@@ -56,10 +71,7 @@ class Viaje {
     validarUuid(pasajeroId, 'pasajeroId');
     validarUbicacion(origen, 'origen');
     validarUbicacion(destino, 'destino');
-    if (fechaProgramada !== null &&
-        (typeof fechaProgramada !== 'string' ||
-         !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(fechaProgramada) ||
-         Number.isNaN(Date.parse(fechaProgramada)))) {
+    if (!esFechaIsoValida(fechaProgramada)) {
       throw new ErrorDeValidacion('fechaProgramada debe ser una fecha RFC 3339 o null');
     }
     if (!Object.values(ESTADOS).includes(estado)) {
@@ -106,12 +118,15 @@ class Viaje {
     return this.cambiarEstado(ESTADOS.FINALIZADO, ahora);
   }
 
-  iniciar(actorId, ahora = new Date().toISOString()) {
-    return this.iniciarEnCurso(actorId, ahora);
+  iniciar(ahora = new Date().toISOString()) {
+    if (!this.conductorId) {
+      throw new ConflictoDeEstado('No se puede iniciar un viaje sin conductor asignado');
+    }
+    return this.cambiarEstado(ESTADOS.INICIADO, ahora);
   }
 
-  completar(actorId, ahora = new Date().toISOString()) {
-    return this.finalizar(actorId, ahora);
+  completar(ahora = new Date().toISOString()) {
+    return this.cambiarEstado(ESTADOS.COMPLETADO, ahora);
   }
 
   cancelar(ahora = new Date().toISOString()) {
@@ -119,8 +134,9 @@ class Viaje {
   }
 
   cambiarEstado(nuevoEstado, ahora = new Date().toISOString()) {
-    if (!TRANSICIONES[this.estado].includes(nuevoEstado)) {
-      throw new ConflictoDeEstado(`No se puede pasar de ${this.estado} a ${nuevoEstado}`);
+    const transicionesPermitidas = TRANSICIONES[this.estado] || [];
+    if (!transicionesPermitidas.includes(nuevoEstado)) {
+      throw new ConflictoDeEstado(`Transición de estado no permitida: ${this.estado} -> ${nuevoEstado}`);
     }
     this.estado = nuevoEstado;
     this.actualizadoEn = ahora;
@@ -128,9 +144,8 @@ class Viaje {
   }
 
   verificarConductor(actorId) {
-    validarUuid(actorId, 'actorId');
     if (this.conductorId !== actorId) {
-      throw new ConflictoDeEstado('Solo el conductor asignado puede operar el viaje');
+      throw new ConflictoDeEstado('Solo el conductor asignado puede realizar esta acción');
     }
   }
 
@@ -141,12 +156,18 @@ class Viaje {
       conductorId: this.conductorId,
       origen: { ...this.origen },
       destino: { ...this.destino },
-      estado: this.estado,
       fechaProgramada: this.fechaProgramada,
+      estado: this.estado,
       creadoEn: this.creadoEn,
       actualizadoEn: this.actualizadoEn
     };
   }
 }
 
-module.exports = { Viaje, ESTADOS, validarUuid, validarUbicacion };
+module.exports = {
+  Viaje,
+  ESTADOS,
+  TRANSICIONES,
+  validarUuid,
+  validarUbicacion
+};

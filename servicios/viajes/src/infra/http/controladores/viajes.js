@@ -28,6 +28,17 @@ function aContrato(viaje) {
   };
 }
 
+function extraerParamsEjecucion(req) {
+  validarUuid(req.params.tripId, 'tripId');
+  validarClaveIdempotencia(req.get('idempotency-key'));
+  return {
+    identificadorViaje: req.params.tripId,
+    actor: req.actor,
+    claveIdempotencia: req.get('idempotency-key'),
+    idCorrelacion: req.idCorrelacion
+  };
+}
+
 function crearControladorViajes(casosUso) {
   return {
     solicitar: async (req, res) => {
@@ -62,42 +73,25 @@ function crearControladorViajes(casosUso) {
     },
 
     cancelar: async (req, res) => {
-      validarUuid(req.params.tripId, 'tripId');
-      validarClaveIdempotencia(req.get('idempotency-key'));
       validarCancelacion(req.body);
       const viaje = await casosUso.cancelar.ejecutar({
-        identificadorViaje: req.params.tripId,
-        actor: req.actor,
-        motivo: req.body.reason,
-        claveIdempotencia: req.get('idempotency-key'),
-        idCorrelacion: req.idCorrelacion
+        ...extraerParamsEjecucion(req),
+        motivo: req.body.reason
       });
       return res.status(200).json(aContrato(viaje));
     },
 
     actualizarEstado: async (req, res) => {
-      validarUuid(req.params.tripId, 'tripId');
-      validarClaveIdempotencia(req.get('idempotency-key'));
       validarActualizacionEstado(req.body);
       const viaje = await casosUso.actualizarEstado.ejecutar({
-        identificadorViaje: req.params.tripId,
-        actor: req.actor,
-        estado: req.body.status,
-        claveIdempotencia: req.get('idempotency-key'),
-        idCorrelacion: req.idCorrelacion
+        ...extraerParamsEjecucion(req),
+        estado: req.body.status
       });
       return res.status(200).json(aContrato(viaje));
     },
 
     aceptarAsignacion: async (req, res) => {
-      validarUuid(req.params.tripId, 'tripId');
-      validarClaveIdempotencia(req.get('idempotency-key'));
-      const viaje = await casosUso.aceptarAsignacion.ejecutar({
-        identificadorViaje: req.params.tripId,
-        actor: req.actor,
-        claveIdempotencia: req.get('idempotency-key'),
-        idCorrelacion: req.idCorrelacion
-      });
+      const viaje = await casosUso.aceptarAsignacion.ejecutar(extraerParamsEjecucion(req));
       return res.status(200).json(aContrato(viaje));
     }
   };

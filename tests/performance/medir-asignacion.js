@@ -6,22 +6,13 @@ const { crearServidor } = require('../../servicios/viajes/src/servidor');
 const { BloqueadorMemoria } = require('../../servicios/viajes/src/infra/memoria/bloqueador-memoria');
 const { PublicadorEventosSimulado } = require('../../servicios/viajes/src/infra/mensajeria/publicador-eventos-simulado');
 
-function codificar(valor) {
-  return Buffer.from(JSON.stringify(valor)).toString('base64url');
-}
+const { crearTokenParaTest } = require('../../servicios/viajes/tests/test-jwt');
 
 function crearToken(conductorId, secret) {
-  const header = codificar({ alg: 'HS256', typ: 'JWT' });
-  const payload = codificar({
-    sub: conductorId,
+  return crearTokenParaTest(conductorId, {
     roles: ['conductor'],
     exp: Math.floor(Date.now() / 1000) + 3600
-  });
-  const firma = crypto
-    .createHmac('sha256', secret)
-    .update(`${header}.${payload}`)
-    .digest('base64url');
-  return `${header}.${payload}.${firma}`;
+  }, secret);
 }
 
 function percentil(valores, p) {

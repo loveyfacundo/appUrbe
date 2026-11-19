@@ -24,6 +24,24 @@ function crearPool(respuestas) {
   };
 }
 
+function crearViajePrueba(overrides = {}) {
+  return {
+    identificador: '7d9f9e3e-4d4d-4c64-bc37-32f3d9b1ce4a',
+    pasajeroId: '5a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765',
+    conductorId: null,
+    origen: { latitud: -34, longitud: -58, direccion: 'Origen' },
+    destino: { latitud: -35, longitud: -59, direccion: 'Destino' },
+    fechaProgramada: null,
+    estado: 'REQUESTED',
+    creadoEn: '2026-01-01T00:00:00.000Z',
+    actualizadoEn: '2026-01-01T00:00:00.000Z',
+    toJSON() {
+      return { identificador: this.identificador, estado: this.estado };
+    },
+    ...overrides
+  };
+}
+
 test('repositorio de viajes usa SQL parametrizado y reconstruye la entidad', async () => {
   const pool = crearPool([{
       rows: [{
@@ -52,17 +70,7 @@ test('guardar confirma viaje e historial en una única transacción', async () =
     { rows: [], rowCount: 1 }
   ]);
   const repositorio = new RepositorioViajesPostgres({ pool });
-  const viaje = {
-    identificador: '7d9f9e3e-4d4d-4c64-bc37-32f3d9b1ce4a',
-    pasajeroId: '5a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765',
-    conductorId: null,
-    origen: { latitud: -34, longitud: -58, direccion: 'Origen' },
-    destino: { latitud: -35, longitud: -59, direccion: 'Destino' },
-    fechaProgramada: null,
-    estado: 'REQUESTED',
-    creadoEn: '2026-01-01T00:00:00.000Z',
-    actualizadoEn: '2026-01-01T00:00:00.000Z'
-  };
+  const viaje = crearViajePrueba();
   await repositorio.guardar(viaje);
   assert.equal(pool.consultas[0].texto, 'BEGIN');
   assert.match(pool.consultas[3].texto, /INSERT INTO historial_estados_viaje/);
@@ -79,20 +87,7 @@ test('guardar agrega el evento al outbox y conserva idempotencia en la misma tra
     { rows: [], rowCount: 1 }
   ]);
   const repositorio = new RepositorioViajesPostgres({ pool });
-  const viaje = {
-    identificador: '7d9f9e3e-4d4d-4c64-bc37-32f3d9b1ce4a',
-    pasajeroId: '5a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765',
-    conductorId: null,
-    origen: { latitud: -34, longitud: -58, direccion: 'Origen' },
-    destino: { latitud: -35, longitud: -59, direccion: 'Destino' },
-    fechaProgramada: null,
-    estado: 'REQUESTED',
-    creadoEn: '2026-01-01T00:00:00.000Z',
-    actualizadoEn: '2026-01-01T00:00:00.000Z',
-    toJSON() {
-      return { identificador: this.identificador, estado: this.estado };
-    }
-  };
+  const viaje = crearViajePrueba();
   const evento = {
     eventId: '9d9f9e3e-4d4d-4c64-bc37-32f3d9b1ce4a',
     eventType: 'TripRequested',

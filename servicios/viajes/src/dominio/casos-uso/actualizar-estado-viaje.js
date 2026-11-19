@@ -1,15 +1,37 @@
 const {
   ErrorDeValidacion,
-  OperacionNoPermitida,
-  ConflictoDeEstado
+  OperacionNoPermitida
 } = require('../errores/errores');
 const { ESTADOS } = require('../entidades/viaje');
+const {
+  validarClaveYCorrelacion,
+  verificarIdempotencia,
+  metadataIdempotenciaOutbox,
+  publicarYGuardar
+} = require('./idempotencia-helper');
 
 const ESTADOS_OPERATIVOS = new Set([
   ESTADOS.EN_ORIGEN,
   ESTADOS.EN_CURSO,
   ESTADOS.FINALIZADO
 ]);
+
+function crearEventoEstado(publicador, estado, identificadorViaje, actorId, idCorrelacion) {
+  if (estado !== ESTADOS.EN_CURSO && estado !== ESTADOS.FINALIZADO) return undefined;
+  const tipoEvento = estado === ESTADOS.FINALIZADO ? 'TripCompleted' : 'TripStarted';
+  return publicador.crearEvento(tipoEvento, {
+    tripId: identificadorViaje,
+    driverId: actorId,
+    status: estado
+  }, { idCorrelacion });
+}
+
+function actualizarFechasEvento(evento, estado, viaje) {
+  if (!evento) return;
+  evento.payload.status = viaje.estado;
+  if (estado === ESTADOS.EN_CURSO) evento.payload.startedAt = viaje.actualizadoEn;
+  if (estado === ESTADOS.FINALIZADO) evento.payload.completedAt = viaje.actualizadoEn;
+}
 
 class ActualizarEstadoViaje {
   constructor({ repositorio, publicador, idempotencia, bloqueador }) {
@@ -32,55 +54,35 @@ class ActualizarEstadoViaje {
     if (!actor || !actor.roles?.includes('conductor')) {
       throw new OperacionNoPermitida('Solo el conductor asignado puede actualizar el estado');
     }
-    if (!claveIdempotencia || !idCorrelacion) {
-      throw new ErrorDeValidacion('claveIdempotencia e idCorrelacion son obligatorios');
-    }
+    validarClaveYCorrelacion(claveIdempotencia, idCorrelacion);
 
     const clave = `${actor.identificador}:${claveIdempotencia}`;
     const huella = JSON.stringify({ identificadorViaje, estado });
-    return this.bloqueador.ejecutar(`idempotencia:${clave}`, async () => {
-      const anterior = await this.idempotencia.buscar(clave);
-      if (anterior) {
-        if (anterior.huella !== huella) {
-          throw new ConflictoDeEstado('La clave de idempotencia fue reutilizada con otro request');
-        }
-        return anterior.respuesta;
-      }
 
-      const datosEvento = estado === ESTADOS.EN_CURSO || estado === ESTADOS.FINALIZADO
-        ? {
-          tipoEvento: estado === ESTADOS.FINALIZADO ? 'TripCompleted' : 'TripStarted',
-          payload: {
-            tripId: identificadorViaje,
-            driverId: actor.identificador,
-            status: estado
-          }
-        }
-        : null;
-      const evento = datosEvento
-        ? this.publicador.crearEvento(datosEvento.tipoEvento, datosEvento.payload, { idCorrelacion })
-        : undefined;
+    return this.bloqueador.ejecutar(`viaje:${identificadorViaje}`, async () => {
+      const idempotente = await verificarIdempotencia(this.idempotencia, clave, huella);
+      if (idempotente.procesado) return idempotente.respuesta;
+
+      const evento = crearEventoEstado(this.publicador, estado, identificadorViaje, actor.identificador, idCorrelacion);
       const viaje = await this.repositorio.actualizarEstadoOperativo({
         identificadorViaje,
         actorId: actor.identificador,
         estado,
         evento: this.repositorio.persisteOutbox ? evento : undefined,
-        idempotencia: this.repositorio.persisteOutbox ? {
-          clave,
-          huella,
-          tiempoVidaMs: this.idempotencia.tiempoVidaMs
-        } : undefined
+        idempotencia: metadataIdempotenciaOutbox(this.repositorio, this.idempotencia, clave, huella)
       });
 
-      if (evento) {
-        evento.payload.status = viaje.estado;
-        if (estado === ESTADOS.EN_CURSO) evento.payload.startedAt = viaje.actualizadoEn;
-        if (estado === ESTADOS.FINALIZADO) evento.payload.completedAt = viaje.actualizadoEn;
-        if (!this.repositorio.persisteOutbox) await this.publicador.publicar(evento);
-      }
-      const respuesta = viaje.toJSON();
-      await this.idempotencia.guardar(clave, huella, respuesta);
-      return respuesta;
+      actualizarFechasEvento(evento, estado, viaje);
+
+      return publicarYGuardar({
+        repositorio: this.repositorio,
+        publicador: this.publicador,
+        idempotencia: this.idempotencia,
+        evento,
+        clave,
+        huella,
+        respuesta: viaje.toJSON()
+      });
     });
   }
 }

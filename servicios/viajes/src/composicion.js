@@ -13,55 +13,136 @@ const { aplicarMigraciones } = require('./infra/db/aplicar-migraciones');
 const { RepositorioOutboxPostgres } = require('./infra/db/outbox');
 const { DespachadorOutbox } = require('./infra/mensajeria/despachador-outbox');
 const { BloqueadorMemoria } = require('./infra/memoria/bloqueador-memoria');
+const { BloqueadorRedis } = require('./infra/redis/bloqueador-redis');
+const { PublicadorEventosRabbitMQ } = require('./infra/mensajeria/publicador-eventos-rabbitmq');
+const { ConsumidorDriverAssigned } = require('./infra/mensajeria/consumidor-driver-assigned');
+
+function crearPoolDb(url) {
+  return url ? new Pool({ connectionString: url }) : null;
+}
+
+function crearClienteRedis(url) {
+  if (!url) return null;
+  const cliente = require('redis').createClient({
+    url,
+    socket: {
+      connectTimeout: 1000,
+      reconnectStrategy: (reintentos) => (reintentos > 2 ? false : reintentos * 100)
+    }
+  });
+  cliente.on('error', (error) => {
+    console.error('Error de conexión Redis', error.message);
+  });
+  return cliente;
+}
+
+function inicializarPersistencia(dependencias) {
+  const pool = dependencias.pool ?? crearPoolDb(process.env.DATABASE_URL);
+  const repositorio = dependencias.repositorio ?? (pool ? new RepositorioViajesPostgres({ pool }) : new RepositorioViajesMemoria());
+  const idempotencia = dependencias.idempotencia ?? (pool ? new RepositorioIdempotenciaPostgres({ pool }) : new RepositorioIdempotenciaMemoria());
+  return { pool, repositorio, idempotencia };
+}
+
+function inicializarBloqueo(dependencias) {
+  const clienteRedis = dependencias.clienteRedis ?? crearClienteRedis(process.env.REDIS_URL);
+  const bloqueador = dependencias.bloqueador ?? (clienteRedis ? new BloqueadorRedis({ client: clienteRedis }) : new BloqueadorMemoria());
+  return { clienteRedis, bloqueador };
+}
+
+function inicializarMensajeria(dependencias, pool, repositorio) {
+  const rabbitUrl = process.env.RABBITMQ_URL;
+  const amqp = rabbitUrl ? require('amqplib') : null;
+
+  const publicador = dependencias.publicador ?? (rabbitUrl
+    ? new PublicadorEventosRabbitMQ({ url: rabbitUrl, amqp })
+    : new PublicadorEventosSimulado());
+
+  const consumidor = dependencias.consumidor ?? (rabbitUrl && pool
+    ? new ConsumidorDriverAssigned({ url: rabbitUrl, amqp, repositorio })
+    : null);
+
+  const despachadorOutbox = dependencias.despachadorOutbox ?? (pool
+    ? new DespachadorOutbox({ repositorio: new RepositorioOutboxPostgres({ pool }), publicador })
+    : null);
+
+  return { publicador, consumidor, despachadorOutbox };
+}
+
+async function ejecutarVerificacion(nombreDependencia, fn) {
+  try {
+    await fn();
+  } catch (error) {
+    error.dependencia = nombreDependencia;
+    throw error;
+  }
+}
+
+async function verificarDependencias({ clienteRedis, bloqueador, publicador, consumidor, despachadorOutbox }) {
+  const dependenciasExternas = [];
+  if (clienteRedis) {
+    await ejecutarVerificacion('redis', () => bloqueador.verificar());
+    dependenciasExternas.push('redis');
+  }
+  if (publicador?.verificar) {
+    await ejecutarVerificacion('rabbitmq', () => publicador.verificar());
+    dependenciasExternas.push('rabbitmq');
+  }
+  if (consumidor) {
+    await ejecutarVerificacion('rabbitmq', () => consumidor.verificar());
+  }
+  if (despachadorOutbox) {
+    await ejecutarVerificacion('postgres', () => despachadorOutbox.verificar());
+  }
+  return dependenciasExternas;
+}
+
+async function cerrarRecursos({ despachadorOutbox, consumidor, pool, publicador, clienteRedis }) {
+  const tareas = [
+    despachadorOutbox && (() => despachadorOutbox.cerrar()),
+    consumidor && (() => consumidor.cerrar()),
+    pool && (() => pool.end()),
+    publicador?.cerrar && (() => publicador.cerrar()),
+    clienteRedis?.isOpen && (() => clienteRedis.quit())
+  ].filter(Boolean);
+
+  const errores = [];
+  for (const cerrar of tareas) {
+    try {
+      await cerrar();
+    } catch (error) {
+      errores.push(error);
+    }
+  }
+  if (errores.length > 0) {
+    throw new AggregateError(errores, 'No se pudieron cerrar todos los recursos del módulo');
+  }
+}
+
+function instanciarCasosUso({ repositorio, idempotencia, publicador, bloqueador }) {
+  return {
+    solicitar: new SolicitarViaje({ repositorio, idempotencia, publicador }),
+    obtener: new ObtenerViaje({ repositorio }),
+    cancelar: new CancelarViaje({ repositorio, idempotencia, publicador, bloqueador }),
+    actualizarEstado: new ActualizarEstadoViaje({
+      repositorio,
+      publicador,
+      idempotencia,
+      bloqueador
+    }),
+    aceptarAsignacion: new AceptarAsignacion({
+      repositorio,
+      idempotencia,
+      publicador,
+      bloqueador
+    })
+  };
+}
 
 function crearModuloViajes(dependencias = {}) {
-  const pool = dependencias.pool ||
-    (process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : null);
-  const repositorio = dependencias.repositorio ||
-    (pool ? new RepositorioViajesPostgres({ pool }) : new RepositorioViajesMemoria());
-  const idempotencia = dependencias.idempotencia ||
-    (pool ? new RepositorioIdempotenciaPostgres({ pool }) : new RepositorioIdempotenciaMemoria());
-  const clienteRedis = dependencias.clienteRedis ||
-    (process.env.REDIS_URL
-      ? require('redis').createClient({
-        url: process.env.REDIS_URL,
-        socket: {
-          connectTimeout: 1000,
-          reconnectStrategy: (reintentos) => reintentos > 2 ? false : reintentos * 100
-        }
-      })
-      : null);
-  if (clienteRedis) {
-    clienteRedis.on('error', (error) => {
-      console.error('Error de conexión Redis', error.message);
-    });
-  }
-  const bloqueador = dependencias.bloqueador ||
-    (clienteRedis
-      ? new (require('./infra/redis/bloqueador-redis').BloqueadorRedis)({ client: clienteRedis })
-      : new BloqueadorMemoria());
-  const publicador = dependencias.publicador ||
-    (process.env.RABBITMQ_URL
-      ? new (require('./infra/mensajeria/publicador-eventos-rabbitmq').PublicadorEventosRabbitMQ)({
-        url: process.env.RABBITMQ_URL,
-        amqp: require('amqplib')
-      })
-      : new PublicadorEventosSimulado());
-  const consumidor = dependencias.consumidor ||
-    (process.env.RABBITMQ_URL && pool
-      ? new (require('./infra/mensajeria/consumidor-driver-assigned').ConsumidorDriverAssigned)({
-        url: process.env.RABBITMQ_URL,
-        amqp: require('amqplib'),
-        repositorio
-      })
-      : null);
-  const despachadorOutbox = dependencias.despachadorOutbox ||
-    (pool
-      ? new DespachadorOutbox({
-        repositorio: new RepositorioOutboxPostgres({ pool }),
-        publicador
-      })
-      : null);
+  const { pool, repositorio, idempotencia } = inicializarPersistencia(dependencias);
+  const { clienteRedis, bloqueador } = inicializarBloqueo(dependencias);
+  const { publicador, consumidor, despachadorOutbox } = inicializarMensajeria(dependencias, pool, repositorio);
+
   return {
     repositorio,
     idempotencia,
@@ -81,79 +162,24 @@ function crearModuloViajes(dependencias = {}) {
       if (despachadorOutbox) await despachadorOutbox.iniciar();
     },
     verificar: async () => {
-      const dependenciasExternas = [];
-      if (clienteRedis) {
-        try {
-          await bloqueador.verificar();
-        } catch (error) {
-          error.dependencia = 'redis';
-          throw error;
-        }
-        dependenciasExternas.push('redis');
-      }
-      if (publicador.verificar) {
-        try {
-          await publicador.verificar();
-        } catch (error) {
-          error.dependencia = 'rabbitmq';
-          throw error;
-        }
-        dependenciasExternas.push('rabbitmq');
-      }
-      if (consumidor) {
-        try {
-          await consumidor.verificar();
-        } catch (error) {
-          error.dependencia = 'rabbitmq';
-          throw error;
-        }
-      }
-      if (despachadorOutbox) {
-        try {
-          await despachadorOutbox.verificar();
-        } catch (error) {
-          error.dependencia = 'postgres';
-          throw error;
-        }
-      }
-      return dependenciasExternas;
+      return verificarDependencias({
+        clienteRedis,
+        bloqueador,
+        publicador,
+        consumidor,
+        despachadorOutbox
+      });
     },
     cerrar: async () => {
-      const errores = [];
-      for (const cerrar of [
-        despachadorOutbox ? () => despachadorOutbox.cerrar() : null,
-        consumidor ? () => consumidor.cerrar() : null,
-        pool ? () => pool.end() : null,
-        publicador.cerrar ? () => publicador.cerrar() : null,
-        clienteRedis?.isOpen ? () => clienteRedis.quit() : null
-      ].filter(Boolean)) {
-        try {
-          await cerrar();
-        } catch (error) {
-          errores.push(error);
-        }
-      }
-      if (errores.length > 0) {
-        throw new AggregateError(errores, 'No se pudieron cerrar todos los recursos del módulo');
-      }
+      return cerrarRecursos({
+        despachadorOutbox,
+        consumidor,
+        pool,
+        publicador,
+        clienteRedis
+      });
     },
-    casosUso: {
-      solicitar: new SolicitarViaje({ repositorio, idempotencia, publicador }),
-      obtener: new ObtenerViaje({ repositorio }),
-      cancelar: new CancelarViaje({ repositorio, idempotencia, publicador }),
-      actualizarEstado: new ActualizarEstadoViaje({
-        repositorio,
-        publicador,
-        idempotencia,
-        bloqueador
-      }),
-      aceptarAsignacion: new AceptarAsignacion({
-        repositorio,
-        idempotencia,
-        publicador,
-        bloqueador
-      })
-    }
+    casosUso: instanciarCasosUso({ repositorio, idempotencia, publicador, bloqueador })
   };
 }
 

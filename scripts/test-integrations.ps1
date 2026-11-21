@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-Write-Host 'Iniciando PostgreSQL, RabbitMQ y Redis...'
+Write-Information 'Iniciando PostgreSQL, RabbitMQ y Redis...' -InformationAction Continue
 docker compose up -d postgres rabbitmq redis
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -31,7 +31,7 @@ $env:TEST_RABBITMQ_URL = "amqp://${rabbitUser}:${rabbitPassword}@127.0.0.1:${rab
 $env:TEST_REDIS_URL = "redis://127.0.0.1:${redisPort}"
 
 $infraestructuraLista = $false
-Write-Host 'Esperando a PostgreSQL, RabbitMQ y Redis...'
+Write-Information 'Esperando a PostgreSQL, RabbitMQ y Redis...' -InformationAction Continue
 for ($i = 0; $i -lt 60; $i++) {
   docker compose exec -T postgres pg_isready -U appurbe -d appurbe
   $postgresListo = $LASTEXITCODE -eq 0
@@ -54,7 +54,7 @@ if (-not $infraestructuraLista) {
   exit 1
 }
 
-Write-Host 'Ejecutando suite completa (unitarias e integración)...'
+Write-Information 'Ejecutando suite completa (unitarias e integración)...' -InformationAction Continue
 node --test `
   servicios/identidad/tests/identidad-flota.test.js `
   servicios/viajes/tests/viaje.test.js `

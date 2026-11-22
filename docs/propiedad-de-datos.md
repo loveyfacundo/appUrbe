@@ -13,6 +13,7 @@ Si un módulo necesita información de otro, se la pide mediante una forma de
 comunicación que el equipo acuerde. Así evitamos que varios módulos cambien
 los mismos datos y se contradigan.
 
+
 ## Tabla de responsabilidades
 
 | Información | Quién la mantiene | Quién podría necesitarla |
@@ -73,4 +74,3 @@ Fecha y hora de la asignación
 
 También falta acordar qué datos personales necesita cada módulo y cuánto
 tiempo se conservan.
-

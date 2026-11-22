@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node index.js",
     "measure:assignment": "node tests/performance/medir-asignacion.js",
-    "test": "node --test servicios/viajes/tests/viaje.test.js servicios/viajes/tests/casos-uso.test.js servicios/viajes/tests/http.test.js servicios/viajes/tests/repositorios-postgres.test.js servicios/viajes/tests/mensajeria-rabbitmq.test.js servicios/viajes/tests/migraciones.test.js servicios/viajes/tests/redis.test.js servicios/viajes/tests/outbox.test.js servicios/tarifas/tests/tarifas.test.js servicios/pagos/tests/pagos.test.js servicios/asignacion/tests/ofertas.test.js tests/concurrencia/postgres-asignacion.test.js"
+    "test:integrations": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-integrations.ps1",
+    "test": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-integrations.ps1"
   },
   "keywords": [],
   "author": "",

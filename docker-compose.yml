@@ -31,7 +31,7 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: postgres:16-alpine
+    image: postgis/postgis:16-3.4-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-appurbe}
       POSTGRES_USER: ${POSTGRES_USER:-appurbe}

@@ -72,6 +72,24 @@ function crearControladorViajes(casosUso) {
       return res.status(200).json(aContrato(viaje));
     },
 
+    ubicacionChofer: async (req, res) => {
+      validarUuid(req.params.tripId, 'tripId');
+      const seguimiento = await casosUso.consultarSeguimiento.consultarUbicacion({
+        identificadorViaje: req.params.tripId,
+        actor: req.actor
+      });
+      return res.status(200).json(seguimiento);
+    },
+
+    seguimientoConductor: async (req, res) => {
+      validarUuid(req.params.tripId, 'tripId');
+      const viaje = await casosUso.consultarSeguimiento.consultarSeguimiento({
+        identificadorViaje: req.params.tripId,
+        actor: req.actor
+      });
+      return res.status(200).json(aContrato(viaje));
+    },
+
     cancelar: async (req, res) => {
       validarCancelacion(req.body);
       const viaje = await casosUso.cancelar.ejecutar({

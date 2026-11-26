@@ -370,3 +370,82 @@ test('HTTP permite que solo un conductor acepte el viaje y deduplica el reintent
   assert.equal(modulo.publicador.eventos.filter((evento) =>
     evento.eventType === 'DriverAssigned').length, 1);
 });
+
+test('HTTP protege ubicación y seguimiento del viaje por pasajero y conductor asignados', async (t) => {
+  const { crearModuloViajes } = require('../src/composicion');
+  const modulo = crearModuloViajes();
+  const app = crearServidor({
+    modulo,
+    secret: SECRET,
+    verificadorPostgres: { verificar: async () => {} }
+  });
+  const conductorId = '6a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765';
+  const creado = await modulo.casosUso.solicitar.ejecutar({
+    pasajeroId,
+    origen: {
+      latitud: ubicaciones.origin.latitude,
+      longitud: ubicaciones.origin.longitude,
+      direccion: ubicaciones.origin.address
+    },
+    destino: {
+      latitud: ubicaciones.destination.latitude,
+      longitud: ubicaciones.destination.longitude,
+      direccion: ubicaciones.destination.address
+    },
+    claveIdempotencia,
+    idCorrelacion: correlationId
+  });
+  const viaje = await modulo.repositorio.buscarPorId(creado.identificador);
+  viaje.asignar(conductorId);
+  await modulo.repositorio.guardar(viaje);
+  const repositorioFlota = app.locals.repositorioFlota;
+  repositorioFlota.perfiles.set(conductorId, {
+    id: conductorId,
+    habilitado: true,
+    disponible: true
+  });
+  await repositorioFlota.guardarUbicacion({
+    conductorId,
+    latitude: -34.602,
+    longitude: -58.38,
+    accuracyMeters: 8,
+    recordedAt: new Date().toISOString()
+  });
+
+  const servidor = app.listen(0, '127.0.0.1');
+  await once(servidor, 'listening');
+  t.after(() => new Promise((resolve, reject) => {
+    servidor.close((error) => error ? reject(error) : resolve());
+  }));
+  const baseUrl = `http://127.0.0.1:${servidor.address().port}`;
+  const ubicacionPath = `${baseUrl}/api/v1/viajes/${creado.identificador}/ubicacion`;
+  const seguimientoPath = `${baseUrl}/api/v1/viajes/${creado.identificador}/seguimiento`;
+
+  const ubicacionPasajero = await fetch(ubicacionPath, { headers: headers() });
+  assert.equal(ubicacionPasajero.status, 200);
+  const respuestaUbicacion = await ubicacionPasajero.json();
+  assert.equal(respuestaUbicacion.driverId, conductorId);
+  assert.equal(respuestaUbicacion.location.latitude, -34.602);
+
+  const ubicacionAjena = await fetch(ubicacionPath, {
+    headers: headers(crearToken(otroUsuarioId))
+  });
+  assert.equal(ubicacionAjena.status, 403);
+
+  const tokenConductor = crearToken(conductorId, { roles: ['chofer'] });
+  const seguimientoConductor = await fetch(seguimientoPath, {
+    headers: headers(tokenConductor)
+  });
+  assert.equal(seguimientoConductor.status, 200);
+  assert.equal((await seguimientoConductor.json()).driverId, conductorId);
+
+  const seguimientoAjeno = await fetch(seguimientoPath, {
+    headers: headers(crearToken(otroUsuarioId, { roles: ['chofer'] }))
+  });
+  assert.equal(seguimientoAjeno.status, 403);
+
+  const ubicacionSolicitadaPorConductor = await fetch(ubicacionPath, {
+    headers: headers(tokenConductor)
+  });
+  assert.equal(ubicacionSolicitadaPorConductor.status, 403);
+});

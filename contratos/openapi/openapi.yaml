@@ -12,6 +12,7 @@ servers:
     description: Desarrollo local
 tags:
   - name: Viajes
+  - name: Conductores
   - name: Reservas
   - name: Pagos
 paths:
@@ -38,6 +39,66 @@ paths:
           description: Cotización calculada por el servidor.
         '401': { $ref: '#/components/responses/Unauthorized' }
         '422': { $ref: '#/components/responses/ValidationError' }
+  /api/v1/conductores/{conductorId}/ubicacion:
+    post:
+      tags: [Conductores]
+      summary: Actualizar la ubicación actual del conductor disponible
+      operationId: actualizarUbicacionConductor
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/DriverId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DriverLocationInput' }
+      responses:
+        '200':
+          description: Posición actual reemplazada.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DriverLocation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+      x-authorization: Solo el propio conductor autenticado puede actualizar su posición cuando está disponible.
+      x-update-interval: Enviar aproximadamente cada 3 segundos; el rango recomendado es 2–5 segundos.
+      x-retention: Solo se conserva la posición actual y vence a los 15 segundos.
+  /api/v1/conductores/disponibles/cercanos:
+    get:
+      tags: [Conductores]
+      summary: Buscar conductores disponibles próximos a un punto
+      operationId: buscarConductoresCercanos
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: latitude
+          in: query
+          required: true
+          schema: { type: number, format: double, minimum: -90, maximum: 90 }
+        - name: longitude
+          in: query
+          required: true
+          schema: { type: number, format: double, minimum: -180, maximum: 180 }
+        - name: radiusMeters
+          in: query
+          required: false
+          schema: { type: number, minimum: 0, exclusiveMinimum: true, maximum: 10000, default: 5000 }
+      responses:
+        '200':
+          description: Candidatos ordenados por distancia; no incluye sus coordenadas.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/NearbyDriver' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+      x-authorization: Solo operador, administrador o un actor con permiso de consulta de disponibilidad.
+      x-search: PostGIS ST_DWithin con índice GiST; usa únicamente ubicaciones vigentes.
   /api/v1/viajes:
     post:
       tags: [Viajes]
@@ -101,6 +162,46 @@ paths:
         '422': { $ref: '#/components/responses/ValidationError' }
         '500': { $ref: '#/components/responses/ServerError' }
       x-authorization: El pasajero, el conductor asignado y operadores autorizados pueden consultar el viaje.
+  /api/v1/viajes/{tripId}/ubicacion:
+    get:
+      tags: [Viajes]
+      summary: Consultar la ubicación actual del conductor de un viaje
+      operationId: consultarUbicacionConductor
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Ubicación actual, o null si todavía no se recibió una actualización vigente.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TripDriverLocation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+      x-authorization: Solo el pasajero propietario puede consultar ubicación en un viaje activo.
+  /api/v1/viajes/{tripId}/seguimiento:
+    get:
+      tags: [Viajes]
+      summary: Consultar el estado y recorrido del viaje asignado al conductor
+      operationId: consultarSeguimientoConductor
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Datos actuales del viaje activo.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Trip' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+      x-authorization: Solo el conductor asignado puede consultar el seguimiento del viaje activo.
   /api/v1/viajes/{tripId}/cancelacion:
     post:
       tags: [Viajes]
@@ -284,6 +385,11 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    DriverId:
+      name: conductorId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
   schemas:
     Coordinates:
       type: object
@@ -321,6 +427,46 @@ components:
         scheduledAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    DriverLocationInput:
+      type: object
+      required: [latitude, longitude]
+      additionalProperties: false
+      properties:
+        latitude: { type: number, format: double, minimum: -90, maximum: 90 }
+        longitude: { type: number, format: double, minimum: -180, maximum: 180 }
+        accuracyMeters: { type: number, minimum: 0, nullable: true }
+    DriverLocation:
+      type: object
+      required: [conductorId, latitude, longitude, accuracyMeters, recordedAt]
+      properties:
+        conductorId: { type: string, format: uuid }
+        latitude: { type: number, format: double }
+        longitude: { type: number, format: double }
+        accuracyMeters: { type: number, nullable: true }
+        recordedAt: { type: string, format: date-time }
+    TripDriverLocation:
+      type: object
+      required: [tripId, driverId, status, location]
+      properties:
+        tripId: { type: string, format: uuid }
+        driverId: { type: string, format: uuid }
+        status: { type: string }
+        location:
+          type: object
+          nullable: true
+          required: [conductorId, latitude, longitude, accuracyMeters, recordedAt]
+          properties:
+            conductorId: { type: string, format: uuid }
+            latitude: { type: number, format: double }
+            longitude: { type: number, format: double }
+            accuracyMeters: { type: number, nullable: true }
+            recordedAt: { type: string, format: date-time }
+    NearbyDriver:
+      type: object
+      required: [driverId, distanceMeters]
+      properties:
+        driverId: { type: string, format: uuid }
+        distanceMeters: { type: number, minimum: 0 }
     ReservationRequest:
       type: object
       required: [tripId, seats]

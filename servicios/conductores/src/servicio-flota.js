@@ -1,5 +1,8 @@
 const crypto = require('node:crypto');
 const { RepositorioFlotaMemoria } = require('./repositorio-flota');
+const {
+  RADIO_BUSQUEDA_MAXIMO_METROS
+} = require('./politica-ubicaciones');
 const { exigirRol } = require('../../identidad/src/servicio-identidad');
 const {
   ErrorDeValidacion,
@@ -111,7 +114,9 @@ class ServicioFlota {
     if (accuracyMeters !== null && (!Number.isFinite(accuracyMeters) || accuracyMeters < 0)) throw new ErrorDeValidacion('accuracyMeters no es válido');
     const perfil = await this.repositorio.buscarPerfil(conductorId);
     if (!perfil) throw new RecursoNoEncontrado('El chofer no tiene perfil');
-    if (!perfil.disponible) throw new ConflictoDeEstado('El chofer debe estar disponible para reportar ubicación');
+    if (!perfil.habilitado || !perfil.disponible) {
+      throw new ConflictoDeEstado('El chofer debe estar habilitado y disponible para reportar ubicación');
+    }
     const ubicacion = {
       conductorId,
       latitude,
@@ -127,6 +132,29 @@ class ServicioFlota {
   async listarDisponibles({ actor }) {
     this._exigirConsultaDisponibilidad(actor);
     return this.repositorio.listarDisponibles();
+  }
+
+  async listarCercanos({ actor, latitude, longitude, radiusMeters = 5000 }) {
+    this._exigirConsultaDisponibilidad(actor);
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+      throw new ErrorDeValidacion('latitude no es válida');
+    }
+    if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+      throw new ErrorDeValidacion('longitude no es válida');
+    }
+    if (!Number.isFinite(radiusMeters) || radiusMeters <= 0 ||
+        radiusMeters > RADIO_BUSQUEDA_MAXIMO_METROS) {
+      throw new ErrorDeValidacion(
+        `radiusMeters debe ser mayor que 0 y no superar ${RADIO_BUSQUEDA_MAXIMO_METROS}`
+      );
+    }
+    return this.repositorio.buscarCercanos({ latitude, longitude, radiusMeters });
+  }
+
+  async limpiarUbicacionesVencidas() {
+    if (typeof this.repositorio.eliminarUbicacionesVencidas === 'function') {
+      await this.repositorio.eliminarUbicacionesVencidas();
+    }
   }
 
   async validarHabilitacion(conductorId, actor) {

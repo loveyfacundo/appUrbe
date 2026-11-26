@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node index.js",
     "measure:assignment": "node tests/performance/medir-asignacion.js",
+    "measure:locations": "node tests/performance/medir-ubicaciones-postgis.js",
     "test:integrations": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-integrations.ps1",
     "test": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-integrations.ps1"
   },

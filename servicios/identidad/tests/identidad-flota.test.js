@@ -5,7 +5,10 @@ const { once } = require('node:events');
 const { ServicioIdentidad } = require('../src/servicio-identidad');
 const { RepositorioIdentidadPostgres } = require('../src/repositorio-identidad');
 const { ServicioFlota } = require('../../conductores/src/servicio-flota');
-const { RepositorioFlotaPostgres } = require('../../conductores/src/repositorio-flota');
+const {
+  RepositorioFlotaMemoria,
+  RepositorioFlotaPostgres
+} = require('../../conductores/src/repositorio-flota');
 const { aplicarMigraciones } = require('../../viajes/src/infra/db/aplicar-migraciones');
 const {
   ErrorDeValidacion,
@@ -15,6 +18,25 @@ const {
 } = require('../../viajes/src/dominio/errores/errores');
 
 const secret = 'clave-de-prueba-de-al-menos-32-caracteres';
+
+test('la ubicación actual vence y deja de ser consultable tras su retención', async () => {
+  const repositorio = new RepositorioFlotaMemoria();
+  const conductorId = '6a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765';
+  await repositorio.guardarPerfil({
+    id: conductorId,
+    habilitado: true,
+    disponible: true
+  });
+  await repositorio.guardarUbicacion({
+    conductorId,
+    latitude: -34.6037,
+    longitude: -58.3816,
+    accuracyMeters: null,
+    recordedAt: new Date(Date.now() - 16000).toISOString()
+  });
+  assert.equal(await repositorio.buscarUbicacion(conductorId), null);
+  assert.equal(repositorio.ubicaciones.has(conductorId), false);
+});
 
 test('registro e inicio de sesión cumplen roles y contraseñas', async () => {
   const identidad = new ServicioIdentidad({ secret });
@@ -111,6 +133,53 @@ test('chofer necesita perfil, vehículo y habilitación antes de disponibilidad'
   assert.equal((await flota.listarDisponibles({
     actor: { identificador: administrador.user.id, roles: ['administrador'] }
   })).length, 1);
+  const candidatos = await flota.listarCercanos({
+    actor: { identificador: administrador.user.id, roles: ['administrador'] },
+    latitude: -34.6037,
+    longitude: -58.3816,
+    radiusMeters: 500
+  });
+  assert.deepEqual(candidatos, [{
+    driverId: chofer.user.id,
+    distanceMeters: 0
+  }]);
+  await assert.rejects(
+    () => flota.listarCercanos({
+      actor: { identificador: administrador.user.id, roles: ['administrador'] },
+      latitude: 91,
+      longitude: -58.3816
+    }),
+    ErrorDeValidacion
+  );
+  await assert.rejects(
+    () => flota.actualizarUbicacion({
+      actor: actorChofer,
+      conductorId: chofer.user.id,
+      latitude: 91,
+      longitude: -58.3816
+    }),
+    ErrorDeValidacion
+  );
+  await flota.cambiarDisponibilidad({
+    actor: actorChofer,
+    conductorId: chofer.user.id,
+    disponible: false
+  });
+  await assert.rejects(
+    () => flota.actualizarUbicacion({
+      actor: actorChofer,
+      conductorId: chofer.user.id,
+      latitude: -34.6037,
+      longitude: -58.3816
+    }),
+    ConflictoDeEstado
+  );
+  assert.equal(await flota.repositorio.buscarUbicacion(chofer.user.id), null);
+  assert.deepEqual(await flota.listarCercanos({
+    actor: { identificador: administrador.user.id, roles: ['administrador'] },
+    latitude: -34.6037,
+    longitude: -58.3816
+  }), []);
 });
 
 test('roles no autorizados no pueden habilitar ni cambiar otro perfil', async () => {
@@ -228,8 +297,15 @@ test('identidad y flota persisten en PostgreSQL entre instancias', {
       actor: { identificador: adminId, roles: ['administrador'] }
     });
     const persistido = disponibles.find((conductor) => conductor.id === driverId);
-    assert.equal(persistido.location.latitude, -34.6037);
+    assert.equal(Object.hasOwn(persistido, 'location'), false);
     assert.equal(persistido.vehicle.brand, 'Toyota');
+    const cercanos = await flotaTrasReinicio.listarCercanos({
+      actor: { identificador: adminId, roles: ['administrador'] },
+      latitude: -34.6037,
+      longitude: -58.3816,
+      radiusMeters: 500
+    });
+    assert.deepEqual(cercanos.map((candidato) => candidato.driverId), [driverId]);
   } finally {
     if (driverId) {
       await pool.query('DELETE FROM ubicaciones WHERE conductor_id = $1', [driverId]);
@@ -316,7 +392,7 @@ test('HTTP completa el alta segura de administrador y el ciclo de flota', {
     await poolAdministrativo.query(`CREATE SCHEMA ${esquema}`);
     pool = new Pool({
       connectionString: process.env.TEST_DATABASE_URL,
-      options: `-c search_path=${esquema}`
+      options: `-c search_path=${esquema},public`
     });
     await aplicarMigraciones(pool);
 
@@ -434,6 +510,12 @@ test('HTTP completa el alta segura de administrador y el ciclo de flota', {
       body: { latitude: -34.6037, longitude: -58.3816, accuracyMeters: 10 }
     });
     assert.equal(ubicacion.status, 200);
+    const ubicacionInvalida = await request(`/api/v1/conductores/${driverId}/ubicacion`, {
+      method: 'POST',
+      token: driverSession.accessToken,
+      body: { latitude: 91, longitude: -58.3816 }
+    });
+    assert.equal(ubicacionInvalida.status, 422);
 
     const listadoProhibido = await request('/api/v1/conductores/disponibles', {
       token: driverSession.accessToken
@@ -445,8 +527,32 @@ test('HTTP completa el alta segura de administrador y el ciclo de flota', {
     });
     assert.equal(disponibles.status, 200);
     const candidato = (await disponibles.json()).find((conductor) => conductor.id === driverId);
-    assert.equal(candidato.location.latitude, -34.6037);
+    assert.equal(Object.hasOwn(candidato, 'location'), false);
     assert.equal(candidato.vehicle.plate, 'HTTP123');
+
+    const cercanos = await request(
+      '/api/v1/conductores/disponibles/cercanos?latitude=-34.6037&longitude=-58.3816&radiusMeters=500',
+      { token: adminSession.accessToken }
+    );
+    assert.equal(cercanos.status, 200);
+    assert.deepEqual(await cercanos.json(), [{ driverId, distanceMeters: 0 }]);
+
+    await request(`/api/v1/conductores/${driverId}/disponibilidad`, {
+      method: 'PATCH',
+      token: driverSession.accessToken,
+      body: { available: false }
+    });
+    const ubicacionChoferNoDisponible = await request(`/api/v1/conductores/${driverId}/ubicacion`, {
+      method: 'POST',
+      token: driverSession.accessToken,
+      body: { latitude: -34.6037, longitude: -58.3816 }
+    });
+    assert.equal(ubicacionChoferNoDisponible.status, 409);
+    const candidatosSinChofer = await request(
+      '/api/v1/conductores/disponibles/cercanos?latitude=-34.6037&longitude=-58.3816',
+      { token: adminSession.accessToken }
+    );
+    assert.deepEqual(await candidatosSinChofer.json(), []);
   } finally {
     if (server) {
       await new Promise((resolve, reject) => {

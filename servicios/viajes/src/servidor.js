@@ -13,7 +13,11 @@ const { crearRutasIdentidad } = require('../../identidad/src/rutas-identidad');
 const { ServicioFlota } = require('../../conductores/src/servicio-flota');
 const { crearRutasFlota } = require('../../conductores/src/rutas-flota');
 const { RepositorioIdentidadPostgres } = require('../../identidad/src/repositorio-identidad');
-const { RepositorioFlotaPostgres } = require('../../conductores/src/repositorio-flota');
+const {
+  RepositorioFlotaMemoria,
+  RepositorioFlotaPostgres
+} = require('../../conductores/src/repositorio-flota');
+const { ConsultarSeguimientoViaje } = require('./dominio/casos-uso/consultar-seguimiento-viaje');
 
 function crearServidor({
   modulo,
@@ -25,7 +29,17 @@ function crearServidor({
   const verificadorReal = verificadorPostgres ||
     crearVerificadorPostgres({ pool: moduloReal.pool || undefined });
   const app = express();
+  const repositorioFlota = moduloReal.pool
+    ? new RepositorioFlotaPostgres({ pool: moduloReal.pool })
+    : new RepositorioFlotaMemoria();
+  const servicioFlota = new ServicioFlota({ repositorio: repositorioFlota });
+  const consultarSeguimiento = new ConsultarSeguimientoViaje({
+    repositorioViajes: moduloReal.repositorio,
+    repositorioUbicaciones: repositorioFlota
+  });
   app.locals.modulo = moduloReal;
+  app.locals.servicioFlota = servicioFlota;
+  app.locals.repositorioFlota = repositorioFlota;
   app.locals.verificadorPostgres = verificadorReal;
   app.use((req, res, next) => {
     if (req.path === '/api/v1/viajes' ||
@@ -60,7 +74,10 @@ function crearServidor({
     }
   });
   app.use('/api/v1/viajes', crearRutasViajes({
-    casosUso: moduloReal.casosUso,
+    casosUso: {
+      ...moduloReal.casosUso,
+      consultarSeguimiento
+    },
     autenticar: crearAutenticacionJwt(secret)
   }));
   app.use('/api/v1/tarifas', crearRutasTarifas({
@@ -79,11 +96,7 @@ function crearServidor({
     tokenAltaInicial: identityBootstrapToken
   }));
   app.use(['/api/v1/conductores', '/api/v1/flota'], crearRutasFlota({
-    servicio: new ServicioFlota({
-      repositorio: moduloReal.pool
-        ? new RepositorioFlotaPostgres({ pool: moduloReal.pool })
-        : undefined
-    }),
+    servicio: servicioFlota,
     autenticar: autenticarIdentidad
   }));
   app.use('/api/v1/viajes', (req, res, next) => {

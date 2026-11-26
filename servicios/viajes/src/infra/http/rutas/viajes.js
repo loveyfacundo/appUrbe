@@ -1,15 +1,16 @@
 const express = require('express');
 const { crearControladorViajes } = require('../controladores/viajes');
 
-function crearRutasViajes({ casosUso, autenticar }) {
+function crearRutasViajes({ casosUso, autenticar, intervaloSeguimientoMs = 1000 }) {
   const router = express.Router();
-  const controlador = crearControladorViajes(casosUso);
+  const controlador = crearControladorViajes(casosUso, { intervaloSeguimientoMs });
   router.use(autenticar);
   router.get('/historial/pasajero', controlador.historialPasajero);
   router.get('/historial/conductor', controlador.historialConductor);
   router.get('/operador/en-curso', controlador.viajesEnCurso);
   router.post('/', controlador.solicitar);
   router.get('/:tripId/ubicacion', controlador.ubicacionChofer);
+  router.get('/:tripId/seguimiento/eventos', controlador.eventosSeguimiento);
   router.get('/:tripId/seguimiento', controlador.seguimientoConductor);
   router.get('/:tripId', controlador.obtener);
   router.post('/:tripId/cancelacion', controlador.cancelar);

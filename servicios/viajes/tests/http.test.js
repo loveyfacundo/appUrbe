@@ -28,14 +28,14 @@ function crearViajeRequest(baseUrl, opciones = {}) {
   });
 }
 
-function cambiarEstadoRequest(baseUrl, tripId, token, idempotencyKey, status) {
+function cambiarEstadoRequest(baseUrl, tripId, token, idempotencyKey, status, mediciones = {}) {
   return fetch(`${baseUrl}/api/v1/viajes/${tripId}/estado`, {
     method: 'PATCH',
     headers: {
       ...headers(token),
       'idempotency-key': idempotencyKey
     },
-    body: JSON.stringify({ status })
+    body: JSON.stringify({ status, ...mediciones })
   });
 }
 
@@ -58,6 +58,39 @@ function headers(token = crearToken(pasajeroId)) {
     authorization: `Bearer ${token}`,
     'content-type': 'application/json',
     'x-correlation-id': correlationId
+  };
+}
+
+function crearLectorSse(cuerpo) {
+  const lector = cuerpo.getReader();
+  const decodificador = new TextDecoder();
+  let buffer = '';
+  return {
+    lector,
+    async siguiente() {
+      while (true) {
+        const separador = buffer.indexOf('\n\n');
+        if (separador >= 0) {
+          const trama = buffer.slice(0, separador);
+          buffer = buffer.slice(separador + 2);
+          const evento = {};
+          for (const linea of trama.split('\n')) {
+            const separadorCampo = linea.indexOf(':');
+            if (separadorCampo < 0) continue;
+            const campo = linea.slice(0, separadorCampo);
+            const valor = linea.slice(separadorCampo + 1).trimStart();
+            if (campo === 'data') evento.data = valor;
+            if (campo === 'event') evento.event = valor;
+            if (campo === 'id') evento.id = valor;
+          }
+          if (evento.event) return { ...evento, data: JSON.parse(evento.data) };
+          continue;
+        }
+        const { value, done } = await lector.read();
+        if (done) throw new Error('El canal SSE terminó antes de recibir un evento');
+        buffer += decodificador.decode(value, { stream: true });
+      }
+    }
   };
 }
 
@@ -293,7 +326,8 @@ test('HTTP permite al conductor asignado avanzar el estado operativo', async (t)
     creado.identificador,
     token,
     '8a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765',
-    'COMPLETED'
+    'COMPLETED',
+    { distanceKm: 0, durationMinutes: 0 }
   );
   assert.equal(completar.status, 200);
   const viajeCompletado = await completar.json();
@@ -310,6 +344,8 @@ test('HTTP permite al conductor asignado avanzar el estado operativo', async (t)
     modulo.publicador.eventos.at(-1).payload.completedAt,
     viajeCompletado.updatedAt
   );
+  assert.equal(modulo.publicador.eventos.at(-1).payload.finalAmount, 500);
+  assert.equal(modulo.publicador.eventos.at(-1).payload.currency, 'ARS');
 });
 
 test('HTTP permite que solo un conductor acepte el viaje y deduplica el reintento', async (t) => {
@@ -448,4 +484,99 @@ test('HTTP protege ubicación y seguimiento del viaje por pasajero y conductor a
     headers: headers(tokenConductor)
   });
   assert.equal(ubicacionSolicitadaPorConductor.status, 403);
+});
+
+test('SSE autoriza pasajero y conductor, actualiza y reconecta con una instantánea actual', async (t) => {
+  const { crearModuloViajes } = require('../src/composicion');
+  const modulo = crearModuloViajes();
+  const app = crearServidor({
+    modulo,
+    secret: SECRET,
+    intervaloSeguimientoMs: 20,
+    verificadorPostgres: { verificar: async () => {} }
+  });
+  const conductorId = '6a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765';
+  const creado = await modulo.casosUso.solicitar.ejecutar({
+    pasajeroId,
+    origen: {
+      latitud: ubicaciones.origin.latitude,
+      longitud: ubicaciones.origin.longitude,
+      direccion: ubicaciones.origin.address
+    },
+    destino: {
+      latitud: ubicaciones.destination.latitude,
+      longitud: ubicaciones.destination.longitude,
+      direccion: ubicaciones.destination.address
+    },
+    claveIdempotencia,
+    idCorrelacion: correlationId
+  });
+  const viaje = await modulo.repositorio.buscarPorId(creado.identificador);
+  viaje.asignar(conductorId);
+  await modulo.repositorio.guardar(viaje);
+  const repositorioFlota = app.locals.repositorioFlota;
+  repositorioFlota.perfiles.set(conductorId, {
+    id: conductorId,
+    habilitado: true,
+    disponible: true
+  });
+  await repositorioFlota.guardarUbicacion({
+    conductorId,
+    latitude: -34.602,
+    longitude: -58.38,
+    accuracyMeters: 8,
+    recordedAt: new Date().toISOString()
+  });
+
+  const servidor = app.listen(0, '127.0.0.1');
+  await once(servidor, 'listening');
+  t.after(() => new Promise((resolve, reject) => {
+    servidor.close((error) => error ? reject(error) : resolve());
+  }));
+  const endpoint = `http://127.0.0.1:${servidor.address().port}/api/v1/viajes/${creado.identificador}/seguimiento/eventos`;
+  const respuestaPasajero = await fetch(endpoint, { headers: headers() });
+  assert.equal(respuestaPasajero.status, 200);
+  assert.match(respuestaPasajero.headers.get('content-type'), /text\/event-stream/);
+  const lectorPasajero = crearLectorSse(respuestaPasajero.body);
+  const inicial = await lectorPasajero.siguiente();
+  assert.equal(inicial.event, 'snapshot');
+  assert.equal(inicial.data.status, 'ASSIGNED');
+  assert.equal(inicial.data.location.latitude, -34.602);
+
+  viaje.iniciarEnCurso(conductorId);
+  await modulo.repositorio.guardar(viaje);
+  await repositorioFlota.guardarUbicacion({
+    conductorId,
+    latitude: -34.603,
+    longitude: -58.381,
+    accuracyMeters: 5,
+    recordedAt: new Date(Date.now() + 1).toISOString()
+  });
+  const actualizacion = await lectorPasajero.siguiente();
+  assert.equal(actualizacion.event, 'update');
+  assert.equal(actualizacion.data.status, 'IN_PROGRESS');
+  assert.equal(actualizacion.data.location.latitude, -34.603);
+
+  await lectorPasajero.lector.cancel();
+  const respuestaReconectada = await fetch(endpoint, { headers: headers() });
+  const lectorReconectado = crearLectorSse(respuestaReconectada.body);
+  const instantaneaReconectada = await lectorReconectado.siguiente();
+  assert.equal(instantaneaReconectada.event, 'snapshot');
+  assert.equal(instantaneaReconectada.data.status, 'IN_PROGRESS');
+  assert.equal(instantaneaReconectada.data.location.latitude, -34.603);
+  await lectorReconectado.lector.cancel();
+
+  const tokenConductor = crearToken(conductorId, { roles: ['conductor'] });
+  const respuestaConductor = await fetch(endpoint, { headers: headers(tokenConductor) });
+  const lectorConductor = crearLectorSse(respuestaConductor.body);
+  const instantaneaConductor = await lectorConductor.siguiente();
+  assert.equal(instantaneaConductor.data.status, 'IN_PROGRESS');
+  assert.equal(instantaneaConductor.data.location.latitude, -34.603);
+  await lectorConductor.lector.cancel();
+
+  const respuestaAjena = await fetch(endpoint, {
+    headers: headers(crearToken(otroUsuarioId, { roles: ['conductor'] }))
+  });
+  assert.equal(respuestaAjena.status, 403);
+  assert.equal((await respuestaAjena.json()).code, 'FORBIDDEN');
 });

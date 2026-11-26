@@ -13,6 +13,8 @@ const ESTADOS_ACTIVOS = [
   ESTADOS.EN_CURSO
 ];
 
+const ROLES_CONDUCTOR = ['conductor', 'chofer'];
+
 class ConsultarSeguimientoViaje {
   constructor({ repositorioViajes, repositorioUbicaciones }) {
     this.repositorioViajes = repositorioViajes;
@@ -43,6 +45,28 @@ class ConsultarSeguimientoViaje {
       throw new OperacionNoPermitida('Solo el conductor asignado puede consultar el seguimiento del viaje');
     }
     return viaje.toJSON();
+  }
+
+  async obtenerInstantanea({ identificadorViaje, actor }) {
+    const viaje = await this.repositorioViajes.buscarPorId(identificadorViaje);
+    if (!viaje) throw new RecursoNoEncontrado();
+
+    const esPasajero = actor?.identificador === viaje.pasajeroId;
+    const esConductorAsignado = actor?.identificador === viaje.conductorId &&
+      actor.roles?.some((rol) => ROLES_CONDUCTOR.includes(rol));
+    if (!esPasajero && !esConductorAsignado) {
+      throw new OperacionNoPermitida('Solo el pasajero y el conductor asignado pueden seguir este viaje');
+    }
+
+    return {
+      tripId: viaje.identificador,
+      status: viaje.estado,
+      driverId: viaje.conductorId,
+      location: viaje.conductorId
+        ? await this.repositorioUbicaciones.buscarUbicacion(viaje.conductorId)
+        : null,
+      updatedAt: viaje.actualizadoEn
+    };
   }
 
   async _buscarViajeActivo(identificadorViaje) {

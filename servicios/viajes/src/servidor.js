@@ -23,6 +23,7 @@ function crearServidor({
   modulo,
   secret = process.env.JWT_SECRET,
   identityBootstrapToken = process.env.IDENTITY_BOOTSTRAP_TOKEN,
+  intervaloSeguimientoMs = 1000,
   verificadorPostgres
 } = {}) {
   const moduloReal = modulo || crearModuloViajes();
@@ -78,7 +79,8 @@ function crearServidor({
       ...moduloReal.casosUso,
       consultarSeguimiento
     },
-    autenticar: crearAutenticacionJwt(secret)
+    autenticar: crearAutenticacionJwt(secret),
+    intervaloSeguimientoMs
   }));
   app.use('/api/v1/tarifas', crearRutasTarifas({
     cotizador: new CotizarViaje(),

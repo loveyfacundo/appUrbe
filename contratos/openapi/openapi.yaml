@@ -202,6 +202,30 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
       x-authorization: Solo el conductor asignado puede consultar el seguimiento del viaje activo.
+  /api/v1/viajes/{tripId}/seguimiento/eventos:
+    get:
+      tags: [Viajes]
+      summary: Seguir estado y posición vigentes con SSE
+      operationId: seguirViajeEnTiempoReal
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Instantáneas completas; al reconectar se recibe primero la instantánea actual.
+          content:
+            text/event-stream:
+              schema: { type: string }
+              example: |
+                id: 1
+                event: snapshot
+                data: {"tripId":"7d9f9e3e-4d4d-4c64-bc37-32f3d9b1ce4a","status":"ASSIGNED","driverId":"6a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765","location":null,"updatedAt":"2026-11-26T18:00:00.000Z"}
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+      x-authorization: Solo el pasajero propietario o el conductor asignado.
+      x-reconnection: Cada conexión empieza con una instantánea completa actual; los eventos no son deltas.
   /api/v1/viajes/{tripId}/cancelacion:
     post:
       tags: [Viajes]

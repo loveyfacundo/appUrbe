@@ -24,15 +24,15 @@ Cada fila contesta cuatro preguntas:
 
 | F-07 | Permitir cancelaciones según las reglas acordadas. | M6 / M9 | Probar cancelaciones permitidas y rechazadas. | Reglas escritas y pruebas |
 
-| F-08 | Calcular la estimación y el monto final en el servidor, con la misma función y usando distancia, tiempo y parámetros configurados. | M7 | Probar que ambas operaciones usen la misma función; probar distancia cero y un viaje que supera el máximo permitido; verificar que se explique cualquier diferencia entre estimación y monto final. | Pruebas de tarifa con casos normales y bordes
+| F-08 | Calcular la estimación y el monto final en el servidor, con la misma función y usando distancia, tiempo y parámetros configurados. | M7 | Probar la tarifa normal, distancia cero, máximo y máximo excedido; verificar el monto emitido al completar y documentar por qué puede diferir de la estimación. | `servicios/tarifas/tests/tarifas.test.js`, `servicios/viajes/tests/http.test.js`, [tarifas](./tarifas.md)
 
 | F-09 | Avisar al usuario sobre cambios importantes. | M8 | Probar el envío y qué ocurre si el servicio de avisos falla. | Resultado de la prueba |
 
 | F-10 | Empezar a buscar conductor apenas se crea el viaje confirmado. | M5 / M4 / M6 | Comprobar que la búsqueda empieza después de la confirmación, sin esperar una fecha futura. | Prueba del recorrido |
 
 | F-11 | Informar el resultado del pago y permitir calificar un viaje terminado. | M7 / M8 / módulo de calificaciones por definir | Probar el aviso del resultado y que solo se pueda calificar un viaje terminado, según las reglas acordadas. | Pruebas de integración |
-| F-12 | Vencer una oferta al conductor si no responde y ofrecer el viaje al siguiente candidato. | M5 | Probar el vencimiento dentro del plazo configurado (entre 15 y 30 segundos, según el punto 6.5), incluso si la aplicación del conductor está cerrada; probar qué ocurre al agotar candidatos. | Pruebas temporizadas de oferta y estado `NO_DRIVERS_AVAILABLE` |
-| F-13 | Enviar al pasajero el estado del viaje y la posición del conductor en tiempo real. | M4 / M6 | Probar la actualización en tiempo real y, tras cortar y restablecer la conexión, recuperar el estado y la posición actuales sin desincronizarse. | Prueba de integración y decisión documentada entre SSE o WebSocket |
+| F-12 | Vencer una oferta al conductor si no responde y ofrecer el viaje al siguiente candidato. | M5 | Probar el vencimiento dentro del plazo configurable (15–30 segundos), incluso si se cierra el cliente; probar aceptación y agotamiento de candidatos. | `servicios/asignacion/tests/ofertas.test.js`, [ofertas](./ofertas.md) |
+| F-13 | Enviar al pasajero y al conductor autorizado el estado del viaje y la posición en tiempo real. | M4 / M6 | Probar autorización, actualizaciones y recuperación de una instantánea actual tras cortar y restablecer la conexión. | `servicios/viajes/tests/http.test.js`, [ADR 005](./adr/005-Seguimiento-SSE.md) |
 
 ## Requisitos generales del proyecto
 

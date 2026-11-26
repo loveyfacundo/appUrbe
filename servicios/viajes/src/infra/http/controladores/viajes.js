@@ -1,4 +1,4 @@
-const { validarUuid } = require('../../../dominio/entidades/viaje');
+const { validarUuid, ESTADOS } = require('../../../dominio/entidades/viaje');
 const {
   validarClaveIdempotencia,
   validarSolicitudViaje,
@@ -39,7 +39,19 @@ function extraerParamsEjecucion(req) {
   };
 }
 
-function crearControladorViajes(casosUso) {
+const ESTADOS_TERMINALES = new Set([
+  ESTADOS.FINALIZADO,
+  ESTADOS.CANCELADO,
+  ESTADOS.CANCELADO_PASAJERO,
+  ESTADOS.CANCELADO_CHOFER,
+  ESTADOS.SIN_CONDUCTOR
+]);
+
+function formatearEventoSse(tipo, identificador, datos) {
+  return `id: ${identificador}\nevent: ${tipo}\ndata: ${JSON.stringify(datos)}\n\n`;
+}
+
+function crearControladorViajes(casosUso, { intervaloSeguimientoMs = 1000 } = {}) {
   return {
     solicitar: async (req, res) => {
       validarClaveIdempotencia(req.get('idempotency-key'));
@@ -88,6 +100,60 @@ function crearControladorViajes(casosUso) {
         actor: req.actor
       });
       return res.status(200).json(aContrato(viaje));
+    },
+
+    eventosSeguimiento: async (req, res) => {
+      validarUuid(req.params.tripId, 'tripId');
+      const consultarInstantanea = () => casosUso.consultarSeguimiento.obtenerInstantanea({
+        identificadorViaje: req.params.tripId,
+        actor: req.actor
+      });
+      const inicial = await consultarInstantanea();
+      res.status(200).set({
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no'
+      });
+      res.flushHeaders();
+      let numeroEvento = 1;
+      let ultimaInstantanea = JSON.stringify(inicial);
+      res.write(`retry: 1000\n${formatearEventoSse('snapshot', numeroEvento, inicial)}`);
+
+      if (ESTADOS_TERMINALES.has(inicial.status)) {
+        return res.end();
+      }
+
+      let consultando = false;
+      const temporizador = setInterval(async () => {
+        if (consultando || res.writableNeedDrain || res.writableEnded) return;
+        consultando = true;
+        try {
+          const actual = await consultarInstantanea();
+          const serializada = JSON.stringify(actual);
+          if (serializada !== ultimaInstantanea) {
+            ultimaInstantanea = serializada;
+            numeroEvento += 1;
+            res.write(formatearEventoSse('update', numeroEvento, actual));
+            if (ESTADOS_TERMINALES.has(actual.status)) {
+              clearInterval(temporizador);
+              res.end();
+            }
+          }
+        } catch (error) {
+          console.error('No se pudo actualizar el seguimiento SSE', error);
+          clearInterval(temporizador);
+          if (!res.writableEnded) {
+            res.write(formatearEventoSse('error', numeroEvento + 1, {
+              message: 'El seguimiento dejó de estar disponible'
+            }));
+            res.end();
+          }
+        } finally {
+          consultando = false;
+        }
+      }, intervaloSeguimientoMs);
+      res.on('close', () => clearInterval(temporizador));
     },
 
     cancelar: async (req, res) => {

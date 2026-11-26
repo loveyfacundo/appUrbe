@@ -11,6 +11,11 @@ test('la distancia cero usa la tarifa base y la misma función sirve al monto fi
   assert.deepEqual(final, estimacion);
 });
 
+test('la tarifa normal y el límite de distancia aplican los parámetros del servidor', () => {
+  assert.equal(calcularTarifa({ distanciaKm: 10, tiempoMinutos: 20 }).amount, 3100);
+  assert.equal(calcularTarifa({ distanciaKm: 100, tiempoMinutos: 10 }).amount, 20800);
+});
+
 test('rechaza una distancia real superior al máximo configurado', () => {
   assert.throws(
     () => calcularTarifa({ distanciaKm: 100.01, tiempoMinutos: 10 }),

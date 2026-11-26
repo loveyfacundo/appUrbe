@@ -74,6 +74,21 @@ function crearRutasFlota({ servicio, autenticar }) {
     }
   });
 
+  router.get('/disponibles/cercanos', async (req, res, next) => {
+    try {
+      res.status(200).json(await servicio.listarCercanos({
+        actor: req.actor,
+        latitude: Number(req.query.latitude),
+        longitude: Number(req.query.longitude),
+        radiusMeters: req.query.radiusMeters === undefined
+          ? 5000
+          : Number(req.query.radiusMeters)
+      }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get('/disponibles', async (req, res, next) => {
     try {
       res.status(200).json(await servicio.listarDisponibles({ actor: req.actor }));

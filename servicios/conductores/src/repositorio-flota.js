@@ -1,3 +1,7 @@
+const {
+  RETENCION_UBICACION_MS
+} = require('./politica-ubicaciones');
+
 class RepositorioFlotaMemoria {
   constructor() {
     this.perfiles = new Map();
@@ -14,7 +18,10 @@ class RepositorioFlotaMemoria {
     const perfil = this.perfiles.get(conductorId);
     if (!perfil) return null;
     perfil.habilitado = habilitado;
-    if (!habilitado) perfil.disponible = false;
+    if (!habilitado) {
+      perfil.disponible = false;
+      this.ubicaciones.delete(conductorId);
+    }
     return perfil;
   }
 
@@ -24,6 +31,7 @@ class RepositorioFlotaMemoria {
       return null;
     }
     perfil.disponible = disponible;
+    if (!disponible) this.ubicaciones.delete(conductorId);
     return perfil;
   }
 
@@ -46,13 +54,21 @@ class RepositorioFlotaMemoria {
 
   async guardarUbicacion(ubicacion) {
     const perfil = this.perfiles.get(ubicacion.conductorId);
-    if (!perfil?.disponible) return null;
+    if (!perfil?.habilitado || !perfil.disponible) return null;
     this.ubicaciones.set(ubicacion.conductorId, ubicacion);
     return ubicacion;
   }
 
   async buscarUbicacion(conductorId) {
-    return this.ubicaciones.get(conductorId) || null;
+    const ubicacion = this.ubicaciones.get(conductorId);
+    if (!ubicacion) return null;
+    const registradaEn = Date.parse(ubicacion.recordedAt);
+    if (!Number.isFinite(registradaEn) ||
+        Date.now() - registradaEn >= RETENCION_UBICACION_MS) {
+      this.ubicaciones.delete(conductorId);
+      return null;
+    }
+    return ubicacion;
   }
 
   async listarDisponibles() {
@@ -60,9 +76,37 @@ class RepositorioFlotaMemoria {
       .filter((perfil) => perfil.habilitado && perfil.disponible)
       .map((perfil) => ({
         ...perfil,
-        vehicle: this.vehiculos.get(perfil.id) || null,
-        location: this.ubicaciones.get(perfil.id) || null
+        vehicle: this.vehiculos.get(perfil.id) || null
       }));
+  }
+
+  async buscarCercanos({ latitude, longitude, radiusMeters }) {
+    const candidatos = [];
+    for (const perfil of this.perfiles.values()) {
+      if (!perfil.habilitado || !perfil.disponible || !this.vehiculos.has(perfil.id)) continue;
+      const ubicacion = await this.buscarUbicacion(perfil.id);
+      if (!ubicacion) continue;
+      const distanceMeters = calcularDistanciaMetros(
+        latitude,
+        longitude,
+        ubicacion.latitude,
+        ubicacion.longitude
+      );
+      if (distanceMeters <= radiusMeters) {
+        candidatos.push({ driverId: perfil.id, distanceMeters });
+      }
+    }
+    return candidatos.sort((a, b) => a.distanceMeters - b.distanceMeters);
+  }
+
+  async eliminarUbicacionesVencidas() {
+    const limite = Date.now() - RETENCION_UBICACION_MS;
+    for (const [conductorId, ubicacion] of this.ubicaciones) {
+      const registradaEn = Date.parse(ubicacion.recordedAt);
+      if (!Number.isFinite(registradaEn) || registradaEn <= limite) {
+        this.ubicaciones.delete(conductorId);
+      }
+    }
   }
 }
 
@@ -94,12 +138,20 @@ class RepositorioFlotaPostgres {
 
   async establecerHabilitacion(conductorId, habilitado) {
     const resultado = await this.pool.query(
-      `UPDATE conductores
+      `WITH actualizado AS (
+       UPDATE conductores
           SET activo = $2,
               disponible = CASE WHEN $2 THEN disponible ELSE FALSE END,
               actualizado_en = NOW()
         WHERE id = $1
-        RETURNING id, usuario_id, licencia_numero, licencia_expira_en, disponible, activo`,
+        RETURNING id, usuario_id, licencia_numero, licencia_expira_en, disponible, activo
+       ), ubicacion_borrada AS (
+         DELETE FROM ubicaciones u
+          USING actualizado a
+          WHERE a.id = u.conductor_id AND a.activo = FALSE
+          RETURNING u.conductor_id
+       )
+       SELECT * FROM actualizado`,
       [conductorId, habilitado]
     );
     return convertirPerfil(resultado.rows[0]);
@@ -107,7 +159,8 @@ class RepositorioFlotaPostgres {
 
   async establecerDisponibilidad(conductorId, disponible) {
     const resultado = await this.pool.query(
-      `UPDATE conductores c
+      `WITH actualizado AS (
+       UPDATE conductores c
           SET disponible = $2, actualizado_en = NOW()
         WHERE c.id = $1
           AND c.activo = TRUE
@@ -116,7 +169,14 @@ class RepositorioFlotaPostgres {
              WHERE v.conductor_id = c.id AND v.activo = TRUE
           ))
         RETURNING c.id, c.usuario_id, c.licencia_numero, c.licencia_expira_en,
-                  c.disponible, c.activo`,
+                  c.disponible, c.activo
+       ), ubicacion_borrada AS (
+         DELETE FROM ubicaciones u
+          USING actualizado a
+          WHERE a.id = u.conductor_id AND a.disponible = FALSE
+          RETURNING u.conductor_id
+       )
+       SELECT * FROM actualizado`,
       [conductorId, disponible]
     );
     return convertirPerfil(resultado.rows[0]);
@@ -180,22 +240,52 @@ class RepositorioFlotaPostgres {
   }
 
   async guardarUbicacion(ubicacion) {
-    const resultado = await this.pool.query(
-      `INSERT INTO ubicaciones
-        (conductor_id, latitud, longitud, precision_metros)
-       SELECT c.id, $2, $3, $4
-         FROM conductores c
-        WHERE c.id = $1 AND c.activo = TRUE AND c.disponible = TRUE
-       RETURNING conductor_id, latitud, longitud, precision_metros, registrada_en`,
-      [
-        ubicacion.conductorId,
-        ubicacion.latitude,
-        ubicacion.longitude,
-        ubicacion.accuracyMeters
-      ]
-    );
-    if (resultado.rowCount === 0) return null;
-    return convertirUbicacion(resultado.rows[0]);
+    const cliente = await this.pool.connect();
+    try {
+      await cliente.query('BEGIN');
+      const conductor = await cliente.query(
+        `SELECT id FROM conductores
+          WHERE id = $1 AND activo = TRUE AND disponible = TRUE
+          FOR UPDATE`,
+        [ubicacion.conductorId]
+      );
+      if (conductor.rowCount === 0) {
+        await cliente.query('COMMIT');
+        return null;
+      }
+      const resultado = await cliente.query(
+        `INSERT INTO ubicaciones
+          (conductor_id, latitud, longitud, precision_metros, posicion, registrada_en)
+         VALUES (
+           $1, $2, $3, $4,
+           ST_SetSRID(
+             ST_MakePoint($3::numeric::double precision, $2::numeric::double precision),
+             4326
+           )::geography,
+           NOW()
+         )
+         ON CONFLICT (conductor_id) DO UPDATE SET
+           latitud = EXCLUDED.latitud,
+           longitud = EXCLUDED.longitud,
+           precision_metros = EXCLUDED.precision_metros,
+           posicion = EXCLUDED.posicion,
+           registrada_en = EXCLUDED.registrada_en
+         RETURNING conductor_id, latitud, longitud, precision_metros, registrada_en`,
+        [
+          ubicacion.conductorId,
+          ubicacion.latitude,
+          ubicacion.longitude,
+          ubicacion.accuracyMeters
+        ]
+      );
+      await cliente.query('COMMIT');
+      return convertirUbicacion(resultado.rows[0]);
+    } catch (error) {
+      await cliente.query('ROLLBACK');
+      throw error;
+    } finally {
+      cliente.release();
+    }
   }
 
   async buscarUbicacion(conductorId) {
@@ -203,9 +293,8 @@ class RepositorioFlotaPostgres {
       `SELECT conductor_id, latitud, longitud, precision_metros, registrada_en
          FROM ubicaciones
         WHERE conductor_id = $1
-        ORDER BY registrada_en DESC, id DESC
-        LIMIT 1`,
-      [conductorId]
+          AND registrada_en > NOW() - ($2::double precision * INTERVAL '1 millisecond')`,
+      [conductorId, RETENCION_UBICACION_MS]
     );
     return convertirUbicacion(resultado.rows[0]);
   }
@@ -214,18 +303,10 @@ class RepositorioFlotaPostgres {
     const resultado = await this.pool.query(
       `SELECT c.id, c.usuario_id, c.licencia_numero, c.licencia_expira_en,
               c.disponible, c.activo,
-              v.id AS vehiculo_id, v.patente, v.marca, v.modelo, v.anio, v.capacidad,
-              u.latitud, u.longitud, u.precision_metros, u.registrada_en
+              v.id AS vehiculo_id, v.patente, v.marca, v.modelo, v.anio, v.capacidad
          FROM conductores c
          JOIN vehiculos v
            ON v.conductor_id = c.id AND v.activo = TRUE
-         LEFT JOIN LATERAL (
-           SELECT latitud, longitud, precision_metros, registrada_en
-             FROM ubicaciones
-            WHERE conductor_id = c.id
-            ORDER BY registrada_en DESC, id DESC
-            LIMIT 1
-         ) u ON TRUE
         WHERE c.activo = TRUE AND c.disponible = TRUE
         ORDER BY c.id`
     );
@@ -239,16 +320,59 @@ class RepositorioFlotaPostgres {
         modelo: fila.modelo,
         anio: fila.anio,
         capacidad: fila.capacidad
-      }),
-      location: convertirUbicacion(fila.latitud === null ? null : {
-        conductor_id: fila.id,
-        latitud: fila.latitud,
-        longitud: fila.longitud,
-        precision_metros: fila.precision_metros,
-        registrada_en: fila.registrada_en
       })
     }));
   }
+
+  async buscarCercanos({ latitude, longitude, radiusMeters }) {
+    const resultado = await this.pool.query(
+      `SELECT c.id AS conductor_id,
+              ST_Distance(
+                u.posicion,
+                ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
+              ) AS distancia_metros
+         FROM ubicaciones u
+         JOIN conductores c
+           ON c.id = u.conductor_id
+         JOIN vehiculos v
+           ON v.conductor_id = c.id AND v.activo = TRUE
+        WHERE c.activo = TRUE
+          AND c.disponible = TRUE
+          AND u.registrada_en > NOW() - ($4::double precision * INTERVAL '1 millisecond')
+          AND ST_DWithin(
+            u.posicion,
+            ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
+            $3::double precision
+          )
+        ORDER BY distancia_metros, c.id`,
+      [longitude, latitude, radiusMeters, RETENCION_UBICACION_MS]
+    );
+    return resultado.rows.map((fila) => ({
+      driverId: fila.conductor_id,
+      distanceMeters: Number(fila.distancia_metros)
+    }));
+  }
+
+  async eliminarUbicacionesVencidas() {
+    await this.pool.query(
+      `DELETE FROM ubicaciones
+        WHERE registrada_en <= NOW() - ($1::double precision * INTERVAL '1 millisecond')`,
+      [RETENCION_UBICACION_MS]
+    );
+  }
+}
+
+function calcularDistanciaMetros(latitudA, longitudA, latitudB, longitudB) {
+  const radioTierraMetros = 6371008.8;
+  const aLatitud = latitudA * Math.PI / 180;
+  const bLatitud = latitudB * Math.PI / 180;
+  const diferenciaLatitud = (latitudB - latitudA) * Math.PI / 180;
+  const diferenciaLongitud = (longitudB - longitudA) * Math.PI / 180;
+  const a = Math.sin(diferenciaLatitud / 2) ** 2 +
+    Math.cos(aLatitud) * Math.cos(bLatitud) *
+    Math.sin(diferenciaLongitud / 2) ** 2;
+  const fraccion = Math.min(1, Math.max(0, a));
+  return 2 * radioTierraMetros * Math.atan2(Math.sqrt(fraccion), Math.sqrt(1 - fraccion));
 }
 
 function convertirPerfil(fila) {

@@ -66,25 +66,33 @@ test('guardar confirma viaje e historial en una única transacción', async () =
   const pool = crearPool([
     { rows: [] },
     { rows: [], rowCount: 1 },
+    { rows: [{ bloqueado_hasta: null }], rowCount: 1 },
+    { rows: [] },
     { rows: [], rowCount: 1 },
-    { rows: [], rowCount: 1 }
+    { rows: [], rowCount: 1 },
+    { rows: [] }
   ]);
   const repositorio = new RepositorioViajesPostgres({ pool });
   const viaje = crearViajePrueba();
   await repositorio.guardar(viaje);
-  assert.equal(pool.consultas[0].texto, 'BEGIN');
-  assert.match(pool.consultas[3].texto, /INSERT INTO historial_estados_viaje/);
-  assert.equal(pool.consultas[4].texto, 'COMMIT');
+  const sql = pool.consultas.map(({ texto }) => texto);
+  assert.equal(sql[0], 'BEGIN');
+  assert.ok(sql.some((texto) => texto.includes('INSERT INTO bloqueos_cancelacion')));
+  assert.ok(sql.some((texto) => texto.includes('INSERT INTO historial_estados_viaje')));
+  assert.equal(sql.at(-1), 'COMMIT');
 });
 
 test('guardar agrega el evento al outbox y conserva idempotencia en la misma transacción', async () => {
   const pool = crearPool([
     { rows: [] },
     { rows: [], rowCount: 1 },
+    { rows: [{ bloqueado_hasta: null }], rowCount: 1 },
+    { rows: [] },
     { rows: [], rowCount: 1 },
     { rows: [], rowCount: 1 },
     { rows: [], rowCount: 1 },
-    { rows: [], rowCount: 1 }
+    { rows: [], rowCount: 1 },
+    { rows: [] }
   ]);
   const repositorio = new RepositorioViajesPostgres({ pool });
   const viaje = crearViajePrueba();
@@ -104,6 +112,7 @@ test('guardar agrega el evento al outbox y conserva idempotencia en la misma tra
     tiempoVidaMs: 86400000
   });
   const sql = pool.consultas.map(({ texto }) => texto);
+  assert.ok(sql.some((texto) => texto.includes('INSERT INTO bloqueos_cancelacion')));
   assert.ok(sql.findIndex((texto) => texto.includes('INSERT INTO eventos_outbox')) <
     sql.findIndex((texto) => texto.includes('INSERT INTO idempotencia')));
   assert.equal(sql.at(-1), 'COMMIT');
@@ -112,6 +121,8 @@ test('guardar agrega el evento al outbox y conserva idempotencia en la misma tra
 test('asignarConductor usa una actualización condicional y guarda el historial en la transacción', async () => {
   const pool = crearPool([
     { rows: [] },
+    { rows: [], rowCount: 1 },
+    { rows: [{ bloqueado_hasta: null }], rowCount: 1 },
     {
       rows: [{
         id: '7d9f9e3e-4d4d-4c64-bc37-32f3d9b1ce4a',
@@ -126,7 +137,8 @@ test('asignarConductor usa una actualización condicional y guarda el historial 
       }],
       rowCount: 1
     },
-    { rows: [], rowCount: 1 }
+    { rows: [], rowCount: 1 },
+    { rows: [] }
   ]);
   const repositorio = new RepositorioViajesPostgres({ pool });
   const viaje = await repositorio.asignarConductor({
@@ -134,19 +146,25 @@ test('asignarConductor usa una actualización condicional y guarda el historial 
     conductorId: '6a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765'
   });
   assert.equal(viaje.estado, 'ASSIGNED');
-  assert.equal(pool.consultas[0].texto, 'BEGIN');
-  assert.match(pool.consultas[1].texto, /conductor_id IS NULL/);
-  assert.match(pool.consultas[1].texto, /estado IN \('REQUESTED', 'DISPATCHING'\)/);
-  assert.match(pool.consultas[2].texto, /INSERT INTO historial_estados_viaje/);
-  assert.equal(pool.consultas[3].texto, 'COMMIT');
+  const sql = pool.consultas.map(({ texto }) => texto);
+  assert.equal(sql[0], 'BEGIN');
+  assert.ok(sql.some((texto) => texto.includes('INSERT INTO bloqueos_cancelacion')));
+  assert.ok(sql.some((texto) =>
+    texto.includes("conductor_id IS NULL") &&
+    texto.includes("estado IN ('REQUESTED', 'DISPATCHING')")));
+  assert.ok(sql.some((texto) => texto.includes('INSERT INTO historial_estados_viaje')));
+  assert.equal(sql.at(-1), 'COMMIT');
 });
 
 test('el consumidor persiste la deduplicación del evento en la misma transacción', async () => {
   const pool = crearPool([
     { rows: [] },
+    { rows: [], rowCount: 1 },
+    { rows: [{ bloqueado_hasta: null }], rowCount: 1 },
     { rows: [{ event_id: '9d9f9e3e-4d4d-4c64-bc37-32f3d9b1ce4a' }], rowCount: 1 },
     { rows: [{ actualizado_en: '2026-01-01T00:00:01.000Z' }], rowCount: 1 },
-    { rows: [], rowCount: 1 }
+    { rows: [], rowCount: 1 },
+    { rows: [] }
   ]);
   const repositorio = new RepositorioViajesPostgres({ pool });
   const resultado = await repositorio.procesarAsignacionEvento({
@@ -155,10 +173,11 @@ test('el consumidor persiste la deduplicación del evento en la misma transacci�
     conductorId: '6a1d6a80-8fb2-4c6a-9c70-4e8d2fd2b765'
   });
   assert.deepEqual(resultado, { duplicado: false });
-  assert.match(pool.consultas[1].texto, /ON CONFLICT \(event_id\) DO NOTHING/);
-  assert.match(pool.consultas[2].texto, /UPDATE viajes/);
-  assert.match(pool.consultas[3].texto, /historial_estados_viaje/);
-  assert.equal(pool.consultas[4].texto, 'COMMIT');
+  const sql = pool.consultas.map(({ texto }) => texto);
+  assert.match(sql[3], /ON CONFLICT \(event_id\) DO NOTHING/);
+  assert.ok(sql.some((texto) => texto.includes('UPDATE viajes')));
+  assert.ok(sql.some((texto) => texto.includes('historial_estados_viaje')));
+  assert.equal(sql.at(-1), 'COMMIT');
 });
 
 test('repositorio de idempotencia conserva la respuesta y consulta por clave', async () => {

@@ -39,9 +39,11 @@ test('aplica migraciones ordenadas y registra cada archivo', async () => {
     '005-invariantes-concurrencia.sql',
     '006-identidad-flota-ubicacion.sql',
     '007-viajes-tarifas-pagos.sql',
-    '008-busqueda-geografica-privacidad.sql'
+    '008-busqueda-geografica-privacidad.sql',
+    '009-cancelaciones-penalidades.sql'
   ]);
   assert.ok(consultas.some(({ texto }) => texto.includes('CREATE TABLE IF NOT EXISTS eventos_procesados')));
   assert.ok(consultas.some(({ texto }) => texto.includes('CREATE TABLE IF NOT EXISTS eventos_outbox')));
+  assert.ok(consultas.some(({ texto }) => texto.includes('CREATE TABLE IF NOT EXISTS bloqueos_cancelacion')));
   assert.ok(consultas.some(({ texto }) => texto.includes('pg_advisory_xact_lock')));
 });

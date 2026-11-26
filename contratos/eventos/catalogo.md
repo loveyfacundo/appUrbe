@@ -41,3 +41,7 @@ El transporte acordado es RabbitMQ. Cada consumidor tiene su propia cola
 durable; las publicaciones usan confirmación del broker y mensajes
 persistent. Un evento puede procesarse fuera de orden: el consumidor debe
 validar el estado actual y no retroceder una transición ya aplicada.
+
+`TripCancelled` incluye estado final, actor, estado anterior, motivo e importe
+de penalidad en ARS para que los consumidores procesen una cancelación ya
+confirmada sin recalcular la regla.

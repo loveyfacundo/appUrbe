@@ -22,7 +22,7 @@ Cada fila contesta cuatro preguntas:
 | F-05 | Asignar un solo conductor a cada viaje. | M4 / M5 / M6 | Dos aceptaciones concurrentes contra PostgreSQL; solo una actualiza el viaje y la otra recibe 409. | Prueba `tests/concurrencia/postgres-asignacion.test.js`, evento `DriverAssigned` y medición de `docs/mediciones.md` |
 | F-06 | Permitir que el conductor asignado inicie y termine el viaje. | M6 | Probar el orden correcto, idempotencia y rechazar acciones de otro conductor o fuera de orden. | Pruebas de estados, permisos y eventos `TripStarted` / `TripCompleted` |
 
-| F-07 | Permitir cancelaciones según las reglas acordadas. | M6 / M9 | Probar cancelaciones permitidas y rechazadas. | Reglas escritas y pruebas |
+| F-07 | Cancelar viajes según actor/estado, guardar motivo y penalidad, y limitar cancelaciones repetidas con bloqueo temporal. | M6 / M9 | Probar reglas por estado/actor, reintento idempotente, límites y carreras reales en PostgreSQL contra llegada e inicio. | Migración `009-cancelaciones-penalidades.sql`, pruebas de casos de uso y `tests/concurrencia/postgres-asignacion.test.js` |
 
 | F-08 | Calcular la estimación y el monto final en el servidor, con la misma función y usando distancia, tiempo y parámetros configurados. | M7 | Probar la tarifa normal, distancia cero, máximo y máximo excedido; verificar el monto emitido al completar y documentar por qué puede diferir de la estimación. | `servicios/tarifas/tests/tarifas.test.js`, `servicios/viajes/tests/http.test.js`, [tarifas](./tarifas.md)
 

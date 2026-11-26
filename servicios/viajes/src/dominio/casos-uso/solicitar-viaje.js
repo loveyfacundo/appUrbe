@@ -22,6 +22,9 @@ class SolicitarViaje {
 
     const idempotente = await verificarIdempotencia(this.idempotencia, clave, huellaActual);
     if (idempotente.procesado) return idempotente.respuesta;
+    if (this.repositorio.verificarSinBloqueoCancelaciones) {
+      await this.repositorio.verificarSinBloqueoCancelaciones(pasajeroId);
+    }
 
     const viaje = new Viaje({ identificador: crypto.randomUUID(), ...datos });
     const evento = this.publicador.crearEvento('TripRequested', {

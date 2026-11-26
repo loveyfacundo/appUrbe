@@ -7,6 +7,7 @@ const {
   OperacionNoPermitida
 } = require('../../dominio/errores/errores');
 const { agregarEventoOutbox } = require('./outbox');
+const { crearPoliticaCancelacionesDesdeEntorno } = require('../../dominio/politica-cancelaciones');
 
 const SQL_CAMPOS_VIAJE = 'id, pasajero_id, conductor_id, origen, destino, fecha_programada, estado, creado_en, actualizado_en';
 
@@ -19,12 +20,46 @@ const SQL_ASIGNAR_CONDUCTOR = `
   RETURNING ${SQL_CAMPOS_VIAJE}
 `;
 
-async function registrarHistorial(cliente, { viajeId, estado, actorId = null, ocurridoEn }) {
+async function registrarHistorial(cliente, {
+  viajeId,
+  estado,
+  actorId = null,
+  ocurridoEn,
+  motivo = null,
+  estadoPrevio = null,
+  penalidadArs = 0
+}) {
   await cliente.query(
-    `INSERT INTO historial_estados_viaje (viaje_id, estado, actor_id, ocurrido_en)
-     VALUES ($1, $2, $3, $4)`,
-    [viajeId, estado, actorId, ocurridoEn]
+    `INSERT INTO historial_estados_viaje
+       (viaje_id, estado, actor_id, ocurrido_en, motivo, estado_previo, penalidad_ars)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [viajeId, estado, actorId, ocurridoEn, motivo, estadoPrevio, penalidadArs]
   );
+}
+
+async function bloquearFilaLimite(cliente, usuarioId) {
+  await cliente.query(
+    `INSERT INTO bloqueos_cancelacion (usuario_id)
+     VALUES ($1)
+     ON CONFLICT (usuario_id) DO NOTHING`,
+    [usuarioId]
+  );
+  const resultado = await cliente.query(
+    `SELECT bloqueado_hasta
+       FROM bloqueos_cancelacion
+      WHERE usuario_id = $1
+      FOR UPDATE`,
+    [usuarioId]
+  );
+  return resultado.rows[0];
+}
+
+function verificarBloqueoActivo(fila) {
+  if (fila?.bloqueado_hasta && new Date(fila.bloqueado_hasta).getTime() > Date.now()) {
+    throw new ConflictoDeEstado(
+      `Usuario bloqueado para nuevas operaciones hasta ${new Date(fila.bloqueado_hasta).toISOString()}`
+    );
+  }
 }
 
 async function guardarIdempotenciaTransaccional(cliente, idempotencia, respuesta) {
@@ -45,6 +80,23 @@ async function guardarIdempotenciaTransaccional(cliente, idempotencia, respuesta
   }
 }
 
+async function obtenerIdempotenciaTransaccional(cliente, idempotencia) {
+  if (!idempotencia) return null;
+  const resultado = await cliente.query(
+    `SELECT huella, respuesta
+       FROM idempotencia
+      WHERE clave = $1 AND expira_en > NOW()
+      FOR UPDATE`,
+    [idempotencia.clave]
+  );
+  const anterior = resultado.rows[0];
+  if (!anterior) return null;
+  if (anterior.huella !== idempotencia.huella) {
+    throw new ConflictoDeEstado('La clave de idempotencia ya fue utilizada por otra operación');
+  }
+  return anterior.respuesta;
+}
+
 function convertirFila(fila) {
   if (!fila) return null;
   return new Viaje({
@@ -56,7 +108,8 @@ function convertirFila(fila) {
     fechaProgramada: fila.fecha_programada ? new Date(fila.fecha_programada).toISOString() : null,
     estado: fila.estado,
     creadoEn: new Date(fila.creado_en).toISOString(),
-    actualizadoEn: new Date(fila.actualizado_en).toISOString()
+    actualizadoEn: new Date(fila.actualizado_en).toISOString(),
+    cancelacion: fila.cancelacion ?? null
   });
 }
 
@@ -68,21 +121,27 @@ function sincronizarEvento(evento, viaje, estado) {
 }
 
 class RepositorioViajesPostgres extends RepositorioViajes {
-  constructor({ pool }) {
+  constructor({
+    pool,
+    politicaCancelaciones = crearPoliticaCancelacionesDesdeEntorno()
+  }) {
     super();
     if (!pool || typeof pool.query !== 'function' || typeof pool.connect !== 'function') {
       throw new TypeError('RepositorioViajesPostgres requiere un pool PostgreSQL');
     }
     this.pool = pool;
+    this.politicaCancelaciones = politicaCancelaciones;
     this.persisteOutbox = true;
   }
 
   async guardar(viaje, evento, idempotencia) {
     await ejecutarEnTransaccion(this.pool, async (cliente) => {
+      const filaLimite = await bloquearFilaLimite(cliente, viaje.pasajeroId);
       const anterior = await cliente.query(
         'SELECT estado FROM viajes WHERE id = $1 FOR UPDATE',
         [viaje.identificador]
       );
+      if (!anterior.rows[0]) verificarBloqueoActivo(filaLimite);
       await cliente.query(
         `INSERT INTO viajes
           (id, pasajero_id, conductor_id, origen, destino, fecha_programada, estado, creado_en, actualizado_en)
@@ -126,11 +185,43 @@ class RepositorioViajesPostgres extends RepositorioViajes {
       `SELECT ${SQL_CAMPOS_VIAJE} FROM viajes WHERE id = $1`,
       [id]
     );
-    return convertirFila(resultado.rows[0]);
+    const viaje = convertirFila(resultado.rows[0]);
+    if (viaje && [
+      ESTADOS.CANCELADO_PASAJERO,
+      ESTADOS.CANCELADO_CHOFER,
+      ESTADOS.CANCELADO_OPERADOR
+    ].includes(viaje.estado)) {
+      const historial = await this.pool.query(
+        `SELECT actor_id, motivo, estado_previo, penalidad_ars, ocurrido_en
+           FROM historial_estados_viaje
+          WHERE viaje_id = $1 AND estado = $2
+          ORDER BY ocurrido_en DESC, id DESC
+          LIMIT 1`,
+        [id, viaje.estado]
+      );
+      if (historial.rows[0]) {
+        const cancelacion = historial.rows[0];
+        viaje.cancelacion = {
+          actorTipo: {
+            [ESTADOS.CANCELADO_PASAJERO]: 'PASAJERO',
+            [ESTADOS.CANCELADO_CHOFER]: 'CHOFER',
+            [ESTADOS.CANCELADO_OPERADOR]: 'OPERADOR'
+          }[viaje.estado],
+          actorId: cancelacion.actor_id,
+          estadoAnterior: cancelacion.estado_previo,
+          penalidadArs: cancelacion.penalidad_ars,
+          moneda: 'ARS',
+          motivo: cancelacion.motivo,
+          ocurridoEn: new Date(cancelacion.ocurrido_en).toISOString()
+        };
+      }
+    }
+    return viaje;
   }
 
   async asignarConductor({ identificadorViaje, conductorId, evento, idempotencia }) {
     return ejecutarEnTransaccion(this.pool, async (cliente) => {
+      verificarBloqueoActivo(await bloquearFilaLimite(cliente, conductorId));
       let resultado;
       try {
         resultado = await cliente.query(SQL_ASIGNAR_CONDUCTOR, [identificadorViaje, conductorId]);
@@ -165,40 +256,61 @@ class RepositorioViajesPostgres extends RepositorioViajes {
 
   async cancelarViaje({
     identificadorViaje,
-    actorId,
-    operadorAutorizado = false,
-    tipoCancelacion = 'CANCELLED',
+    actor,
     motivo,
     evento,
-    idempotencia
+    idempotencia,
+    politicaCancelaciones = this.politicaCancelaciones
   }) {
-    return ejecutarEnTransaccion(this.pool, async (cliente) => {
+    const actorId = actor.identificador;
+    const operadorAutorizado = actor.roles?.includes('operador') &&
+      actor.permisos?.includes('trips:cancel');
+    const resultado = await ejecutarEnTransaccion(this.pool, async (cliente) => {
+      const filaLimite = await bloquearFilaLimite(cliente, actorId);
       const bloqueado = await cliente.query(
         `SELECT ${SQL_CAMPOS_VIAJE} FROM viajes WHERE id = $1 FOR UPDATE`,
         [identificadorViaje]
       );
       if (bloqueado.rowCount === 0) throw new RecursoNoEncontrado();
-      const actual = bloqueado.rows[0];
-      const esPasajero = actual.pasajero_id === actorId;
-      const esChoferAsignado = tipoCancelacion === 'CANCELLED_BY_DRIVER' &&
-        actual.conductor_id === actorId;
-      if (!esPasajero && !operadorAutorizado && !esChoferAsignado) {
-        throw new OperacionNoPermitida();
-      }
-      const estadosCancelables = esChoferAsignado
-        ? ['ASSIGNED', 'DRIVER_ARRIVING', 'IN_PROGRESS']
-        : ['REQUESTED', 'DISPATCHING', 'ASSIGNED', 'DRIVER_ARRIVING'];
-      if (!estadosCancelables.includes(actual.estado)) {
-        throw new ConflictoDeEstado('El viaje ya fue asignado o no admite cancelación');
+      const respuestaIdempotente = await obtenerIdempotenciaTransaccional(cliente, idempotencia);
+      if (respuestaIdempotente) return { respuestaIdempotente };
+      const actual = convertirFila(bloqueado.rows[0]);
+      const decision = politicaCancelaciones.resolver({ viaje: actual, actor });
+
+      const bloqueoActivo = !operadorAutorizado &&
+        filaLimite?.bloqueado_hasta &&
+        new Date(filaLimite.bloqueado_hasta).getTime() > Date.now();
+      if (decision.cuentaParaLimite) {
+        const conteo = await cliente.query(
+          `SELECT COUNT(*)::integer AS cantidad
+             FROM historial_estados_viaje
+            WHERE actor_id = $1
+              AND estado IN ('CANCELLED_BY_PASSENGER', 'CANCELLED_BY_DRIVER')
+              AND ocurrido_en > NOW() - ($2 * INTERVAL '1 millisecond')`,
+          [actorId, politicaCancelaciones.periodoCancelacionesMs]
+        );
+        if (!bloqueoActivo &&
+            conteo.rows[0].cantidad >= politicaCancelaciones.limiteCancelaciones) {
+          const bloqueadoHasta = new Date(Date.now() + politicaCancelaciones.bloqueoCancelacionesMs);
+          await cliente.query(
+            `UPDATE bloqueos_cancelacion
+                SET bloqueado_hasta = $2,
+                    motivo = 'Límite de cancelaciones excedido',
+                    actualizado_en = NOW()
+              WHERE usuario_id = $1`,
+            [actorId, bloqueadoHasta]
+          );
+          return { bloqueadoHasta };
+        }
       }
 
       const actualizado = await cliente.query(
         `UPDATE viajes
             SET estado = $2, actualizado_en = NOW()
           WHERE id = $1
-            AND estado = ANY($3::varchar[])
+            AND estado = $3
         RETURNING ${SQL_CAMPOS_VIAJE}`,
-        [identificadorViaje, tipoCancelacion, estadosCancelables]
+        [identificadorViaje, decision.estadoFinal, decision.estadoAnterior]
       );
       if (actualizado.rowCount === 0) {
         throw new ConflictoDeEstado('El viaje ya fue asignado o no admite cancelación');
@@ -208,13 +320,49 @@ class RepositorioViajesPostgres extends RepositorioViajes {
         viajeId: identificadorViaje,
         estado: fila.estado,
         actorId,
-        ocurridoEn: fila.actualizado_en
+        ocurridoEn: fila.actualizado_en,
+        motivo,
+        estadoPrevio: decision.estadoAnterior,
+        penalidadArs: decision.penalidadArs
       });
+      const cancelacion = {
+        actorTipo: decision.tipoActor,
+        actorId,
+        estadoAnterior: decision.estadoAnterior,
+        penalidadArs: decision.penalidadArs,
+        moneda: 'ARS',
+        motivo,
+        ocurridoEn: new Date(fila.actualizado_en).toISOString()
+      };
+      if (evento) {
+        Object.assign(evento.payload, {
+          status: fila.estado,
+          actorType: decision.tipoActor,
+          previousStatus: decision.estadoAnterior,
+          penaltyAmount: decision.penalidadArs,
+          currency: 'ARS'
+        });
+      }
       await agregarEventoOutbox(cliente, evento);
       const viaje = convertirFila(fila);
+      viaje.cancelacion = cancelacion;
       await guardarIdempotenciaTransaccional(cliente, idempotencia, viaje.toJSON());
       return viaje;
     });
+    if (resultado.bloqueadoHasta) {
+      throw new ConflictoDeEstado(
+        `Límite de cancelaciones excedido; usuario bloqueado hasta ${resultado.bloqueadoHasta.toISOString()}`
+      );
+    }
+    return resultado.respuestaIdempotente || resultado;
+  }
+
+  async verificarSinBloqueoCancelaciones(usuarioId) {
+    const resultado = await this.pool.query(
+      `SELECT bloqueado_hasta FROM bloqueos_cancelacion WHERE usuario_id = $1`,
+      [usuarioId]
+    );
+    verificarBloqueoActivo(resultado.rows[0]);
   }
 
   async actualizarEstadoOperativo({
@@ -262,6 +410,7 @@ class RepositorioViajesPostgres extends RepositorioViajes {
 
   async procesarAsignacionEvento({ eventId, identificadorViaje, conductorId }) {
     return ejecutarEnTransaccion(this.pool, async (cliente) => {
+      verificarBloqueoActivo(await bloquearFilaLimite(cliente, conductorId));
       const registrado = await cliente.query(
         `INSERT INTO eventos_procesados (event_id, tipo_evento)
          VALUES ($1, 'DriverAssigned')

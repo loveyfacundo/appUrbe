@@ -20,6 +20,7 @@ const { ConsultarHistorial } = require('./dominio/casos-uso/consultar-historial'
 const { ConsultarViajesEnCurso } = require('./dominio/casos-uso/consultar-viajes-en-curso');
 const { CobroSimulado } = require('../../pagos/src/cobro-simulado');
 const { RepositorioPagosMemoria } = require('../../pagos/src/repositorio-pagos-memoria');
+const { crearPoliticaCancelacionesDesdeEntorno } = require('./dominio/politica-cancelaciones');
 
 function crearPoolDb(url) {
   return url ? new Pool({ connectionString: url }) : null;
@@ -40,9 +41,11 @@ function crearClienteRedis(url) {
   return cliente;
 }
 
-function inicializarPersistencia(dependencias) {
+function inicializarPersistencia(dependencias, politicaCancelaciones) {
   const pool = dependencias.pool ?? crearPoolDb(process.env.DATABASE_URL);
-  const repositorio = dependencias.repositorio ?? (pool ? new RepositorioViajesPostgres({ pool }) : new RepositorioViajesMemoria());
+  const repositorio = dependencias.repositorio ?? (pool
+    ? new RepositorioViajesPostgres({ pool, politicaCancelaciones })
+    : new RepositorioViajesMemoria({ politicaCancelaciones }));
   const idempotencia = dependencias.idempotencia ?? (pool ? new RepositorioIdempotenciaPostgres({ pool }) : new RepositorioIdempotenciaMemoria());
   return { pool, repositorio, idempotencia };
 }
@@ -122,14 +125,20 @@ async function cerrarRecursos({ despachadorOutbox, consumidor, pool, publicador,
   }
 }
 
-function instanciarCasosUso({ repositorio, idempotencia, publicador, bloqueador }) {
+function instanciarCasosUso({ repositorio, idempotencia, publicador, bloqueador, politicaCancelaciones }) {
   const cobroSimulado = new CobroSimulado({
     repositorio: new RepositorioPagosMemoria()
   });
   return {
     solicitar: new SolicitarViaje({ repositorio, idempotencia, publicador }),
     obtener: new ObtenerViaje({ repositorio }),
-    cancelar: new CancelarViaje({ repositorio, idempotencia, publicador, bloqueador }),
+    cancelar: new CancelarViaje({
+      repositorio,
+      idempotencia,
+      publicador,
+      bloqueador,
+      politicaCancelaciones
+    }),
     actualizarEstado: new ActualizarEstadoViaje({
       repositorio,
       publicador,
@@ -149,12 +158,15 @@ function instanciarCasosUso({ repositorio, idempotencia, publicador, bloqueador 
 }
 
 function crearModuloViajes(dependencias = {}) {
-  const { pool, repositorio, idempotencia } = inicializarPersistencia(dependencias);
+  const politicaCancelaciones = dependencias.politicaCancelaciones ??
+    crearPoliticaCancelacionesDesdeEntorno();
+  const { pool, repositorio, idempotencia } = inicializarPersistencia(dependencias, politicaCancelaciones);
   const { clienteRedis, bloqueador } = inicializarBloqueo(dependencias);
   const { publicador, consumidor, despachadorOutbox } = inicializarMensajeria(dependencias, pool, repositorio);
 
   return {
     repositorio,
+    politicaCancelaciones,
     idempotencia,
     publicador,
     bloqueador,
@@ -189,7 +201,13 @@ function crearModuloViajes(dependencias = {}) {
         clienteRedis
       });
     },
-    casosUso: instanciarCasosUso({ repositorio, idempotencia, publicador, bloqueador })
+    casosUso: instanciarCasosUso({
+      repositorio,
+      idempotencia,
+      publicador,
+      bloqueador,
+      politicaCancelaciones
+    })
   };
 }
 

@@ -65,12 +65,15 @@ ID del conductor
 Fecha y hora de la asignación
 ```
 
-## Dos responsabilidades que todavía hay que confirmar
+## Asignación y retención de ubicación
 
 - **Asignación:** propuesta inicial: Despacho coordina la búsqueda, y Viajes
   guarda el conductor asignado como parte del viaje.
 - **Comprobante de pago:** propuesta inicial: Pagos conserva el registro del
   cobro; Notificaciones puede encargarse de entregar el comprobante.
+- **Ubicación actual:** M4 mantiene una única posición por conductor
+  disponible; la posición vence a los 15 segundos, se elimina al dejar de
+  estar disponible y no se conserva historial de trayectorias.
 
-También falta acordar qué datos personales necesita cada módulo y cuánto
-tiempo se conservan.
+Los datos personales que necesita cada módulo y la retención de otros datos
+aún deben acordarse por separado.

@@ -15,20 +15,22 @@ const ESTADOS = Object.freeze({
   COMPLETADO: 'COMPLETED',
   CANCELADO: 'CANCELLED',
   CANCELADO_PASAJERO: 'CANCELLED_BY_PASSENGER',
-  CANCELADO_CHOFER: 'CANCELLED_BY_DRIVER'
+  CANCELADO_CHOFER: 'CANCELLED_BY_DRIVER',
+  CANCELADO_OPERADOR: 'CANCELLED_BY_OPERATOR'
 });
 
 const TRANSICIONES = Object.freeze({
-  [ESTADOS.SOLICITADO]: [ESTADOS.DESPACHANDO, ESTADOS.ASIGNADO, ESTADOS.CANCELADO, ESTADOS.CANCELADO_PASAJERO],
-  [ESTADOS.DESPACHANDO]: [ESTADOS.ASIGNADO, ESTADOS.SIN_CONDUCTOR, ESTADOS.CANCELADO, ESTADOS.CANCELADO_PASAJERO],
-  [ESTADOS.ASIGNADO]: [ESTADOS.EN_ORIGEN, ESTADOS.INICIADO, ESTADOS.CANCELADO, ESTADOS.CANCELADO_PASAJERO, ESTADOS.CANCELADO_CHOFER],
-  [ESTADOS.EN_ORIGEN]: [ESTADOS.EN_CURSO, ESTADOS.CANCELADO, ESTADOS.CANCELADO_PASAJERO, ESTADOS.CANCELADO_CHOFER],
-  [ESTADOS.EN_CURSO]: [ESTADOS.FINALIZADO],
+  [ESTADOS.SOLICITADO]: [ESTADOS.DESPACHANDO, ESTADOS.ASIGNADO, ESTADOS.CANCELADO, ESTADOS.CANCELADO_PASAJERO, ESTADOS.CANCELADO_OPERADOR],
+  [ESTADOS.DESPACHANDO]: [ESTADOS.ASIGNADO, ESTADOS.SIN_CONDUCTOR, ESTADOS.CANCELADO, ESTADOS.CANCELADO_PASAJERO, ESTADOS.CANCELADO_OPERADOR],
+  [ESTADOS.ASIGNADO]: [ESTADOS.EN_ORIGEN, ESTADOS.INICIADO, ESTADOS.CANCELADO, ESTADOS.CANCELADO_PASAJERO, ESTADOS.CANCELADO_CHOFER, ESTADOS.CANCELADO_OPERADOR],
+  [ESTADOS.EN_ORIGEN]: [ESTADOS.EN_CURSO, ESTADOS.CANCELADO, ESTADOS.CANCELADO_PASAJERO, ESTADOS.CANCELADO_CHOFER, ESTADOS.CANCELADO_OPERADOR],
+  [ESTADOS.EN_CURSO]: [ESTADOS.FINALIZADO, ESTADOS.CANCELADO_CHOFER, ESTADOS.CANCELADO_OPERADOR],
   [ESTADOS.FINALIZADO]: [],
   [ESTADOS.SIN_CONDUCTOR]: [],
   [ESTADOS.CANCELADO]: [],
   [ESTADOS.CANCELADO_PASAJERO]: [],
-  [ESTADOS.CANCELADO_CHOFER]: []
+  [ESTADOS.CANCELADO_CHOFER]: [],
+  [ESTADOS.CANCELADO_OPERADOR]: []
 });
 
 function esRangoValido(val, min, max) {
@@ -70,7 +72,7 @@ function validarUbicacion(ubicacion, campo) {
 }
 
 class Viaje {
-  constructor({ identificador, pasajeroId, origen, destino, fechaProgramada = null, conductorId = null, estado = ESTADOS.SOLICITADO, creadoEn, actualizadoEn }) {
+  constructor({ identificador, pasajeroId, origen, destino, fechaProgramada = null, conductorId = null, estado = ESTADOS.SOLICITADO, creadoEn, actualizadoEn, cancelacion = null }) {
     validarUuid(identificador, 'identificador');
     validarUuid(pasajeroId, 'pasajeroId');
     validarUbicacion(origen, 'origen');
@@ -90,6 +92,7 @@ class Viaje {
     this.estado = estado;
     this.creadoEn = creadoEn || new Date().toISOString();
     this.actualizadoEn = actualizadoEn || this.creadoEn;
+    this.cancelacion = cancelacion;
   }
 
   asignar(conductorId, ahora = new Date().toISOString()) {
@@ -148,6 +151,10 @@ class Viaje {
     return this.cambiarEstado(ESTADOS.CANCELADO_CHOFER, ahora);
   }
 
+  cancelarPorOperador(ahora = new Date().toISOString()) {
+    return this.cambiarEstado(ESTADOS.CANCELADO_OPERADOR, ahora);
+  }
+
   cambiarEstado(nuevoEstado, ahora = new Date().toISOString()) {
     const transicionesPermitidas = TRANSICIONES[this.estado] || [];
     if (!transicionesPermitidas.includes(nuevoEstado)) {
@@ -174,7 +181,8 @@ class Viaje {
       fechaProgramada: this.fechaProgramada,
       estado: this.estado,
       creadoEn: this.creadoEn,
-      actualizadoEn: this.actualizadoEn
+      actualizadoEn: this.actualizadoEn,
+      ...(this.cancelacion ? { cancelacion: { ...this.cancelacion } } : {})
     };
   }
 }

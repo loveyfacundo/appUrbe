@@ -3,6 +3,7 @@ const {
   OperacionNoPermitida
 } = require('../errores/errores');
 const { ESTADOS } = require('../entidades/viaje');
+const { esChofer } = require('../actores');
 const {
   validarClaveYCorrelacion,
   verificarIdempotencia,
@@ -55,7 +56,7 @@ class ActualizarEstadoViaje {
     if (!ESTADOS_OPERATIVOS.has(estado)) {
       throw new ErrorDeValidacion('estado no es una transición operativa válida');
     }
-    if (!actor || !actor.roles?.includes('conductor')) {
+    if (!esChofer(actor)) {
       throw new OperacionNoPermitida('Solo el conductor asignado puede actualizar el estado');
     }
     validarClaveYCorrelacion(claveIdempotencia, idCorrelacion);

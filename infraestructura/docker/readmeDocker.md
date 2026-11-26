@@ -5,7 +5,7 @@
 `docker-compose.yml` levanta:
 
 - `app`: API Node.js 22 + Express en `http://localhost:3000`.
-- `postgres`: PostgreSQL 16 para persistencia.
+- `postgres`: PostgreSQL 16 con PostGIS para persistencia y búsqueda geográfica.
 - `rabbitmq`: RabbitMQ 3.13; el servicio publica eventos persistentes en un exchange durable y el panel está en `http://localhost:15672`.
 - `redis`: Redis 7 para bloqueos distribuidos con vencimiento y operaciones idempotentes.
 
@@ -68,6 +68,14 @@ npm run measure:assignment
 
 El escenario, la meta y el espacio para registrar resultados están en
 [`docs/mediciones.md`](../../docs/mediciones.md).
+
+Para medir la búsqueda espacial con 10.000 conductores y revisar el plan
+`EXPLAIN (ANALYZE, BUFFERS)` del índice GiST:
+
+```powershell
+$env:TEST_DATABASE_URL = "postgresql://appurbe:AppUrbe2026@localhost:55432/appurbe_test"
+npm run measure:locations
+```
 
 Detener los contenedores sin borrar datos:
 

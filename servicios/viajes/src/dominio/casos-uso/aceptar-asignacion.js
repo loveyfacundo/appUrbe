@@ -2,6 +2,7 @@ const {
   ErrorDeValidacion,
   OperacionNoPermitida
 } = require('../errores/errores');
+const { esChofer } = require('../actores');
 const {
   validarClaveYCorrelacion,
   verificarIdempotencia,
@@ -23,7 +24,7 @@ class AceptarAsignacion {
     claveIdempotencia,
     idCorrelacion
   }) {
-    if (!actor || !actor.roles?.includes('conductor')) {
+    if (!esChofer(actor)) {
       throw new OperacionNoPermitida('Solo un conductor puede aceptar viajes');
     }
     validarClaveYCorrelacion(claveIdempotencia, idCorrelacion);
@@ -36,6 +37,9 @@ class AceptarAsignacion {
       try {
         const idempotente = await verificarIdempotencia(this.idempotencia, clave, huella);
         if (idempotente.procesado) return idempotente.respuesta;
+        if (this.repositorio.verificarSinBloqueoCancelaciones) {
+          await this.repositorio.verificarSinBloqueoCancelaciones(actor.identificador);
+        }
 
         const evento = this.publicador.crearEvento('DriverAssigned', {
           tripId: identificadorViaje,

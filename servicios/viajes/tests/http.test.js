@@ -120,7 +120,9 @@ test('HTTP crea, consulta y cancela viajes según el contrato', async (t) => {
     body: JSON.stringify({ reason: 'Cambio de planes' })
   });
   assert.equal(cancelar.status, 200);
-  assert.equal((await cancelar.json()).status, 'CANCELLED');
+  const cancelado = await cancelar.json();
+  assert.equal(cancelado.status, 'CANCELLED_BY_PASSENGER');
+  assert.equal(cancelado.cancellation.penaltyAmount, 0);
 });
 
 test('HTTP valida entrada y devuelve errores con correlationId', async (t) => {
@@ -202,7 +204,9 @@ test('HTTP permite cancelar a un operador solo con el permiso del contrato', asy
     body: JSON.stringify({ reason: 'Cancelación operativa' })
   });
   assert.equal(cancelar.status, 200);
-  assert.equal((await cancelar.json()).status, 'CANCELLED');
+  const cancelado = await cancelar.json();
+  assert.equal(cancelado.status, 'CANCELLED_BY_OPERATOR');
+  assert.equal(cancelado.cancellation.actorType, 'OPERADOR');
 });
 
 test('HTTP rechaza JSON mal formado con error consistente', async (t) => {

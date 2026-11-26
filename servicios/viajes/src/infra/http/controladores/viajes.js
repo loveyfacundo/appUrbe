@@ -7,7 +7,7 @@ const {
 } = require('../validadores/viajes');
 
 function aContrato(viaje) {
-  return {
+  const contrato = {
     id: viaje.identificador,
     passengerId: viaje.pasajeroId,
     driverId: viaje.conductorId,
@@ -26,6 +26,20 @@ function aContrato(viaje) {
     createdAt: viaje.creadoEn,
     updatedAt: viaje.actualizadoEn
   };
+  if (viaje.cancelacion) {
+    contrato.cancellation = {
+      actorType: viaje.cancelacion.actorTipo,
+      previousStatus: viaje.cancelacion.estadoAnterior,
+      penaltyAmount: viaje.cancelacion.penalidadArs,
+      currency: viaje.cancelacion.moneda,
+      reason: viaje.cancelacion.motivo,
+      occurredAt: viaje.cancelacion.ocurridoEn
+    };
+    if (viaje.cancelacion.actorId) {
+      contrato.cancellation.actorId = viaje.cancelacion.actorId;
+    }
+  }
+  return contrato;
 }
 
 function extraerParamsEjecucion(req) {

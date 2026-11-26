@@ -15,6 +15,10 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-appurbe}:${POSTGRES_PASSWORD:-AppUrbe2026}@postgres:5432/${POSTGRES_DB:-appurbe}
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-appurbe}:${RABBITMQ_PASSWORD:-appurbe_dev_only}@rabbitmq:5672
       REDIS_URL: redis://redis:6379
+      PENALIDAD_CANCELACION_LLEGADA_ARS: ${PENALIDAD_CANCELACION_LLEGADA_ARS:-1000}
+      LIMITE_CANCELACIONES: ${LIMITE_CANCELACIONES:-3}
+      PERIODO_CANCELACIONES_DIAS: ${PERIODO_CANCELACIONES_DIAS:-30}
+      BLOQUEO_CANCELACIONES_HORAS: ${BLOQUEO_CANCELACIONES_HORAS:-24}
     depends_on:
       postgres:
         condition: service_healthy

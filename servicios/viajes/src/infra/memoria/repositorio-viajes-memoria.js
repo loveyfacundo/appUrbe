@@ -5,14 +5,21 @@ const {
   ConflictoDeEstado
 } = require('../../dominio/errores/errores');
 const { ESTADOS } = require('../../dominio/entidades/viaje');
+const { crearPoliticaCancelacionesDesdeEntorno } = require('../../dominio/politica-cancelaciones');
 
 class RepositorioViajesMemoria extends RepositorioViajes {
-  constructor() {
+  constructor({ politicaCancelaciones = crearPoliticaCancelacionesDesdeEntorno() } = {}) {
     super();
     this.viajes = new Map();
+    this.politicaCancelaciones = politicaCancelaciones;
+    this.cancelacionesPorUsuario = new Map();
+    this.bloqueosCancelacion = new Map();
   }
 
   async guardar(viaje) {
+    if (!this.viajes.has(viaje.identificador)) {
+      this.verificarSinBloqueoCancelaciones(viaje.pasajeroId);
+    }
     this.viajes.set(viaje.identificador, viaje);
     return viaje;
   }
@@ -22,7 +29,8 @@ class RepositorioViajesMemoria extends RepositorioViajes {
   }
 
   async asignarConductor({ identificadorViaje, conductorId }) {
-    const viaje = await this.buscarPorId(identificadorViaje);
+    this.verificarSinBloqueoCancelaciones(conductorId);
+    const viaje = this.viajes.get(identificadorViaje);
     if (!viaje) throw new RecursoNoEncontrado();
     const ocupado = [...this.viajes.values()].some((otro) =>
       otro.conductorId === conductorId &&
@@ -35,25 +43,58 @@ class RepositorioViajesMemoria extends RepositorioViajes {
     return this.guardar(viaje);
   }
 
-  async cancelarViaje({ identificadorViaje, actorId, operadorAutorizado = false, tipoCancelacion = 'CANCELLED' }) {
-    const viaje = await this.buscarPorId(identificadorViaje);
+  verificarSinBloqueoCancelaciones(usuarioId) {
+    const bloqueadoHasta = this.bloqueosCancelacion.get(usuarioId);
+    if (bloqueadoHasta && bloqueadoHasta > Date.now()) {
+      throw new ConflictoDeEstado(
+        `Usuario bloqueado para nuevas operaciones hasta ${new Date(bloqueadoHasta).toISOString()}`
+      );
+    }
+  }
+
+  async cancelarViaje({
+    identificadorViaje,
+    actor,
+    motivo,
+    politicaCancelaciones = this.politicaCancelaciones
+  }) {
+    const actorId = actor.identificador;
+    const viaje = this.viajes.get(identificadorViaje);
     if (!viaje) throw new RecursoNoEncontrado();
-    const esPasajero = viaje.pasajeroId === actorId;
-    const esChoferAsignado = tipoCancelacion === 'CANCELLED_BY_DRIVER' &&
-      viaje.conductorId === actorId;
-    if (!esPasajero && !operadorAutorizado && !esChoferAsignado) {
-      throw new OperacionNoPermitida();
+    const decision = politicaCancelaciones.resolver({ viaje, actor });
+    const ahora = Date.now();
+    const bloqueadoHasta = this.bloqueosCancelacion.get(actorId);
+    if (decision.cuentaParaLimite &&
+        (!bloqueadoHasta || bloqueadoHasta <= ahora)) {
+      const cancelaciones = (this.cancelacionesPorUsuario.get(actorId) || [])
+        .filter((timestamp) => timestamp > ahora - politicaCancelaciones.periodoCancelacionesMs);
+      if (cancelaciones.length >= politicaCancelaciones.limiteCancelaciones) {
+        const bloqueadoHasta = ahora + politicaCancelaciones.bloqueoCancelacionesMs;
+        this.bloqueosCancelacion.set(actorId, bloqueadoHasta);
+        throw new ConflictoDeEstado(
+          `Límite de cancelaciones excedido; usuario bloqueado hasta ${new Date(bloqueadoHasta).toISOString()}`
+        );
+      }
     }
-    const estadosCancelables = esChoferAsignado
-      ? [ESTADOS.ASIGNADO, ESTADOS.EN_ORIGEN, ESTADOS.EN_CURSO]
-      : [ESTADOS.SOLICITADO, ESTADOS.DESPACHANDO, ESTADOS.ASIGNADO, ESTADOS.EN_ORIGEN];
-    if (!estadosCancelables.includes(viaje.estado)) {
-      throw new ConflictoDeEstado('El viaje ya fue asignado o no admite cancelación');
+    if (decision.estadoFinal === ESTADOS.CANCELADO_CHOFER) viaje.cancelarPorChofer();
+    else if (decision.estadoFinal === ESTADOS.CANCELADO_PASAJERO) viaje.cancelarPorPasajero();
+    else viaje.cancelarPorOperador();
+    viaje.cancelacion = {
+      actorTipo: decision.tipoActor,
+      actorId,
+      estadoAnterior: decision.estadoAnterior,
+      penalidadArs: decision.penalidadArs,
+      moneda: 'ARS',
+      motivo,
+      ocurridoEn: viaje.actualizadoEn
+    };
+    if (decision.cuentaParaLimite) {
+      const cancelaciones = this.cancelacionesPorUsuario.get(actorId) || [];
+      cancelaciones.push(ahora);
+      this.cancelacionesPorUsuario.set(actorId, cancelaciones);
     }
-    if (tipoCancelacion === 'CANCELLED_BY_DRIVER') viaje.cancelarPorChofer();
-    else if (tipoCancelacion === 'CANCELLED_BY_PASSENGER') viaje.cancelarPorPasajero();
-    else viaje.cancelar();
-    return this.guardar(viaje);
+    this.viajes.set(viaje.identificador, viaje);
+    return viaje;
   }
 
   async actualizarEstadoOperativo({ identificadorViaje, actorId, estado }) {
@@ -70,6 +111,8 @@ class RepositorioViajesMemoria extends RepositorioViajes {
 
   async limpiar() {
     this.viajes.clear();
+    this.cancelacionesPorUsuario.clear();
+    this.bloqueosCancelacion.clear();
   }
 
   async buscarHistorialPasajero(pasajeroId) {

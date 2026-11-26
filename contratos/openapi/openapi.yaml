@@ -255,8 +255,8 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/ValidationError' }
         '500': { $ref: '#/components/responses/ServerError' }
-      x-authorization: El pasajero o un operador con permiso trips:cancel puede cancelar.
-      x-idempotency: Obligatoria. No se cobra dos veces por reintentos.
+      x-authorization: El pasajero propietario, el chofer asignado o un operador con permiso trips:cancel pueden cancelar según el estado.
+      x-idempotency: Obligatoria. La respuesta, estado y penalidad se guardan una sola vez por clave.
   /api/v1/viajes/{tripId}/estado:
     patch:
       tags: [Viajes]
@@ -447,10 +447,21 @@ components:
         destination: { $ref: '#/components/schemas/Coordinates' }
         status:
           type: string
-          enum: [REQUESTED, DISPATCHING, ASSIGNED, DRIVER_ARRIVING, IN_PROGRESS, COMPLETED, NO_DRIVERS_AVAILABLE, CANCELLED, CANCELLED_BY_PASSENGER, CANCELLED_BY_DRIVER]
+          enum: [REQUESTED, DISPATCHING, ASSIGNED, DRIVER_ARRIVING, IN_PROGRESS, COMPLETED, NO_DRIVERS_AVAILABLE, CANCELLED, CANCELLED_BY_PASSENGER, CANCELLED_BY_DRIVER, CANCELLED_BY_OPERATOR]
         scheduledAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+        cancellation:
+          type: object
+          required: [actorType, actorId, previousStatus, penaltyAmount, currency, reason, occurredAt]
+          properties:
+            actorType: { type: string, enum: [PASAJERO, CHOFER, OPERADOR] }
+            actorId: { type: string, format: uuid }
+            previousStatus: { type: string, enum: [REQUESTED, DISPATCHING, ASSIGNED, DRIVER_ARRIVING, IN_PROGRESS] }
+            penaltyAmount: { type: integer, minimum: 0 }
+            currency: { type: string, enum: [ARS] }
+            reason: { type: string, minLength: 3, maxLength: 500 }
+            occurredAt: { type: string, format: date-time }
     DriverLocationInput:
       type: object
       required: [latitude, longitude]

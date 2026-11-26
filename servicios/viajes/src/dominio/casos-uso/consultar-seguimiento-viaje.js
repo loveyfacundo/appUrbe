@@ -6,6 +6,7 @@ const {
   OperacionNoPermitida,
   ConflictoDeEstado
 } = require('../errores/errores');
+const { esChofer } = require('../actores');
 
 const ESTADOS_ACTIVOS = [
   ESTADOS.ASIGNADO,
@@ -40,7 +41,7 @@ class ConsultarSeguimientoViaje {
 
   async consultarSeguimiento({ identificadorViaje, actor }) {
     const viaje = await this._buscarViajeActivo(identificadorViaje);
-    if (!actor?.roles?.includes('chofer') ||
+    if (!esChofer(actor) ||
         actor.identificador !== viaje.conductorId) {
       throw new OperacionNoPermitida('Solo el conductor asignado puede consultar el seguimiento del viaje');
     }

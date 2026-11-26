@@ -1,4 +1,5 @@
 const { OperacionNoPermitida } = require('../errores/errores');
+const { esChofer } = require('../actores');
 
 class ConsultarHistorial {
   constructor({ repositorio }) {
@@ -11,7 +12,7 @@ class ConsultarHistorial {
       return this.repositorio.buscarHistorialPasajero(actor.identificador);
     }
     if (filtro === 'conductor') {
-      if (!actor.roles?.includes('conductor')) throw new OperacionNoPermitida();
+      if (!esChofer(actor)) throw new OperacionNoPermitida();
       return this.repositorio.buscarHistorialConductor(actor.identificador);
     }
     throw new OperacionNoPermitida('Filtro de historial no permitido');

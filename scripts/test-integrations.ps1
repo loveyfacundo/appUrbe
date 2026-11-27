@@ -69,5 +69,6 @@ node --test `
   servicios/pagos/tests/pagos.test.js `
   servicios/asignacion/tests/ofertas.test.js `
   tests/observabilidad.test.js `
+  tests/performance/benchmark-flota-k6.test.js `
   tests/concurrencia/postgres-asignacion.test.js
 exit $LASTEXITCODE

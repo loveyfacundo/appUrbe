@@ -26,6 +26,37 @@ const ESTADOS_OPERADOR = [
   ESTADOS.EN_CURSO
 ];
 
+function esOperador(actor) {
+  return actor?.roles?.includes('operador') &&
+    actor.permisos?.includes('trips:cancel');
+}
+
+function resolverTipoActor(viaje, actor) {
+  const opciones = [
+    {
+      coincide: esOperador(actor),
+      tipo: 'OPERADOR',
+      estadoFinal: ESTADOS.CANCELADO_OPERADOR,
+      estadosPermitidos: ESTADOS_OPERADOR
+    },
+    {
+      coincide: actor?.identificador === viaje.pasajeroId,
+      tipo: 'PASAJERO',
+      estadoFinal: ESTADOS.CANCELADO_PASAJERO,
+      estadosPermitidos: ESTADOS_PASAJERO
+    },
+    {
+      coincide: actor?.identificador === viaje.conductorId && esChofer(actor),
+      tipo: 'CHOFER',
+      estadoFinal: ESTADOS.CANCELADO_CHOFER,
+      estadosPermitidos: ESTADOS_CHOFER
+    }
+  ];
+  const opcion = opciones.find(({ coincide }) => coincide);
+  if (!opcion) throw new OperacionNoPermitida();
+  return opcion;
+}
+
 function bloqueoEstaActivo(bloqueadoHasta, ahora = Date.now()) {
   if (bloqueadoHasta === null || bloqueadoHasta === undefined) return false;
   const timestamp = new Date(bloqueadoHasta).getTime();
@@ -58,30 +89,8 @@ class PoliticaCancelaciones {
   }
 
   resolver({ viaje, actor }) {
-    const esOperador = actor?.roles?.includes('operador') &&
-      actor.permisos?.includes('trips:cancel');
-    const esPasajero = actor?.identificador === viaje.pasajeroId;
-    const esConductorAsignado = actor?.identificador === viaje.conductorId &&
-      esChofer(actor);
-
-    let tipoActor;
-    let estadoFinal;
-    let estadosPermitidos;
-    if (esOperador) {
-      tipoActor = 'OPERADOR';
-      estadoFinal = ESTADOS.CANCELADO_OPERADOR;
-      estadosPermitidos = ESTADOS_OPERADOR;
-    } else if (esPasajero) {
-      tipoActor = 'PASAJERO';
-      estadoFinal = ESTADOS.CANCELADO_PASAJERO;
-      estadosPermitidos = ESTADOS_PASAJERO;
-    } else if (esConductorAsignado) {
-      tipoActor = 'CHOFER';
-      estadoFinal = ESTADOS.CANCELADO_CHOFER;
-      estadosPermitidos = ESTADOS_CHOFER;
-    } else {
-      throw new OperacionNoPermitida();
-    }
+    const { tipo: tipoActor, estadoFinal, estadosPermitidos } =
+      resolverTipoActor(viaje, actor);
 
     if (!estadosPermitidos.includes(viaje.estado)) {
       throw new ConflictoDeEstado(

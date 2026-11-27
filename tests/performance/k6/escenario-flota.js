@@ -62,6 +62,76 @@ function comprobar(respuesta, estado, etiqueta) {
   });
 }
 
+function solicitarViaje(driver, passenger, indice, clave) {
+  const origen = {
+    latitude: driver.latitude,
+    longitude: driver.longitude,
+    address: `Origen de prueba ${indice}`
+  };
+  const destino = {
+    latitude: driver.latitude + 0.001,
+    longitude: driver.longitude + 0.001,
+    address: `Destino de prueba ${indice}`
+  };
+  const respuesta = http.post(
+    `${__ENV.BENCH_BASE_URL}/api/v1/viajes`,
+    JSON.stringify({ origin: origen, destination: destino }),
+    {
+      headers: headers(passenger.token, { 'idempotency-key': clave }),
+      tags: { endpoint: 'trip_request' }
+    }
+  );
+  tripRequests.add(1);
+  tripRequestLatency.add(respuesta.timings.duration);
+  if (comprobar(respuesta, 201, 'viaje_solicitado')) return respuesta.json();
+
+  tripRequestFailures.add(1);
+  httpFailures.add(1);
+  if (indice === 0) {
+    console.error(`Trip request failed: HTTP ${respuesta.status} ${String(respuesta.body).slice(0, 300)}`);
+  }
+  return null;
+}
+
+function buscarConductor(driver) {
+  const query = `latitude=${driver.latitude}&longitude=${driver.longitude}&radiusMeters=100`;
+  const respuesta = http.get(
+    `${__ENV.BENCH_BASE_URL}/api/v1/conductores/disponibles/cercanos?${query}`,
+    {
+      headers: headers(fixtures.admin.token),
+      tags: { endpoint: 'nearby_drivers' }
+    }
+  );
+  candidateSearchLatency.add(respuesta.timings.duration);
+  if (!comprobar(respuesta, 200, 'candidatos_encontrados')) {
+    assignmentFailures.add(1);
+    httpFailures.add(1);
+    return false;
+  }
+
+  if (respuesta.json().some((candidato) => candidato.driverId === driver.id)) return true;
+  assignmentFailures.add(1);
+  return false;
+}
+
+function asignarViaje(viaje, driver, clave) {
+  const respuesta = http.post(
+    `${__ENV.BENCH_BASE_URL}/api/v1/viajes/${viaje.id}/asignacion`,
+    null,
+    {
+      headers: headers(driver.token, { 'idempotency-key': clave }),
+      tags: { endpoint: 'trip_assignment' }
+    }
+  );
+  assignmentRequests.add(1);
+  assignmentLatency.add(respuesta.timings.duration);
+  if (comprobar(respuesta, 200, 'viaje_asignado')) return true;
+
+  assignmentFailures.add(1);
+  httpFailures.add(1);
+  return false;
+}
+
 export function actualizarUbicaciones() {
   if (__ITER === 0) sleep(((__VU - 1) * 2) / driverCount);
   const driver = fixtures.drivers[(__VU - 1) % fixtures.drivers.length];
@@ -102,76 +172,9 @@ export function solicitarYAsignar() {
     Number(__ENV.BENCH_PASSENGER_INDEX || 0) % fixtures.passengers.length
   ];
   const inicio = Date.now();
-  const origen = {
-    latitude: driver.latitude,
-    longitude: driver.longitude,
-    address: `Origen de prueba ${indice}`
-  };
-  const destino = {
-    latitude: driver.latitude + 0.001,
-    longitude: driver.longitude + 0.001,
-    address: `Destino de prueba ${indice}`
-  };
   const clave = driver.id;
-  const solicitud = http.post(
-    `${__ENV.BENCH_BASE_URL}/api/v1/viajes`,
-    JSON.stringify({ origin: origen, destination: destino }),
-    {
-      headers: headers(passenger.token, { 'idempotency-key': clave }),
-      tags: { endpoint: 'trip_request' }
-    }
-  );
-  tripRequests.add(1);
-  tripRequestLatency.add(solicitud.timings.duration);
-  if (!comprobar(solicitud, 201, 'viaje_solicitado')) {
-    tripRequestFailures.add(1);
-    httpFailures.add(1);
-    if (indice === 0) {
-      console.error(`Trip request failed: HTTP ${solicitud.status} ${String(solicitud.body).slice(0, 300)}`);
-    }
-    sleep(1);
-    return;
-  }
-
-  const viaje = solicitud.json();
-  const query = `latitude=${driver.latitude}&longitude=${driver.longitude}&radiusMeters=100`;
-  const busqueda = http.get(
-    `${__ENV.BENCH_BASE_URL}/api/v1/conductores/disponibles/cercanos?${query}`,
-    {
-      headers: headers(fixtures.admin.token),
-      tags: { endpoint: 'nearby_drivers' }
-    }
-  );
-  candidateSearchLatency.add(busqueda.timings.duration);
-  if (!comprobar(busqueda, 200, 'candidatos_encontrados')) {
-    assignmentFailures.add(1);
-    httpFailures.add(1);
-    sleep(1);
-    return;
-  }
-
-  const candidatos = busqueda.json();
-  if (!candidatos.some((candidato) => candidato.driverId === driver.id)) {
-    assignmentFailures.add(1);
-    sleep(1);
-    return;
-  }
-
-  const asignacion = http.post(
-    `${__ENV.BENCH_BASE_URL}/api/v1/viajes/${viaje.id}/asignacion`,
-    null,
-    {
-      headers: headers(driver.token, {
-        'idempotency-key': clave
-      }),
-      tags: { endpoint: 'trip_assignment' }
-    }
-  );
-  assignmentRequests.add(1);
-  assignmentLatency.add(asignacion.timings.duration);
-  if (!comprobar(asignacion, 200, 'viaje_asignado')) {
-    assignmentFailures.add(1);
-    httpFailures.add(1);
+  const viaje = solicitarViaje(driver, passenger, indice, clave);
+  if (!viaje || !buscarConductor(driver) || !asignarViaje(viaje, driver, clave)) {
     sleep(1);
     return;
   }

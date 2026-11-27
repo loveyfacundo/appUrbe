@@ -1,3 +1,5 @@
+const { iniciarTelemetria } = require('./observabilidad/opentelemetry');
+const cerrarTelemetria = iniciarTelemetria();
 const { crearServidor } = require('./servicios/viajes/src/servidor');
 const {
     RETENCION_UBICACION_MS
@@ -30,6 +32,7 @@ async function cerrarGracefully(signal) {
     if (limpiezaUbicaciones) clearInterval(limpiezaUbicaciones);
     if (!servidor) {
         await app.locals.modulo?.cerrar?.();
+        await cerrarTelemetria();
         return;
     }
     servidor.close(async (error) => {
@@ -42,6 +45,7 @@ async function cerrarGracefully(signal) {
             if (app.locals.verificadorPostgres?.pool !== app.locals.modulo?.pool) {
                 await app.locals.verificadorPostgres?.cerrar?.();
             }
+            await cerrarTelemetria();
         } catch (closeError) {
             console.error('Error al cerrar recursos', closeError);
             process.exitCode = 1;
@@ -61,5 +65,10 @@ iniciar().catch(async (error) => {
         await app.locals.modulo?.cerrar?.();
     } catch (closeError) {
         console.error('No se pudieron cerrar los recursos tras el fallo de inicio', closeError);
+    }
+    try {
+        await cerrarTelemetria();
+    } catch (closeError) {
+        console.error('No se pudo cerrar OpenTelemetry tras el fallo de inicio', closeError);
     }
 });

@@ -1,0 +1,108 @@
+{
+  "title": "AppUrbe API - Observabilidad",
+  "uid": "appurbe-api-observabilidad",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Prometheus"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Requests HTTP por segundo",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_request_duration_seconds_count{service_name=\"appurbe-api\"}[$__rate_interval])) by (http_request_method)",
+          "legendFormat": "{{http_request_method}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Latencia HTTP p50 / p95 / p99 (ms)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "1000 * histogram_quantile(0.50, sum(rate(http_server_request_duration_seconds_bucket{service_name=\"appurbe-api\"}[$__rate_interval])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "1000 * histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket{service_name=\"appurbe-api\"}[$__rate_interval])) by (le))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "1000 * histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket{service_name=\"appurbe-api\"}[$__rate_interval])) by (le))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Respuestas por código HTTP (4xx / 5xx)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_request_duration_seconds_count{service_name=\"appurbe-api\",http_response_status_code=~\"4..\"}[$__rate_interval]))",
+          "legendFormat": "4xx/s"
+        },
+        {
+          "expr": "sum(rate(http_server_request_duration_seconds_count{service_name=\"appurbe-api\",http_response_status_code=~\"5..\"}[$__rate_interval]))",
+          "legendFormat": "5xx/s"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Event loop lag p99 y máximo por exportación (ms)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "nodejs_eventloop_delay_p99_milliseconds{service_name=\"appurbe-api\"}",
+          "legendFormat": "p99"
+        },
+        {
+          "expr": "nodejs_eventloop_delay_max_milliseconds{service_name=\"appurbe-api\"}",
+          "legendFormat": "max"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Memoria del proceso (MiB)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "process_memory_rss_bytes{service_name=\"appurbe-api\"} / 1024 / 1024",
+          "legendFormat": "RSS (MiB)"
+        },
+        {
+          "expr": "process_memory_heap_used_bytes{service_name=\"appurbe-api\"} / 1024 / 1024",
+          "legendFormat": "Heap used (MiB)"
+        }
+      ]
+    }
+  ]
+}

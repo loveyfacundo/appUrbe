@@ -1,5 +1,11 @@
 const { RepositorioViajes } = require('../../dominio/puertos/repositorio-viajes');
-const { Viaje, ESTADOS } = require('../../dominio/entidades/viaje');
+const {
+  Viaje,
+  ESTADOS,
+  ESTADOS_VIAJE_ACTIVO,
+  TIPO_ACTOR_POR_ESTADO_CANCELACION,
+  ESTADOS_CANCELACION_CONTABILIZADOS
+} = require('../../dominio/entidades/viaje');
 const { ejecutarEnTransaccion } = require('./transaccion');
 const {
   ConflictoDeEstado,
@@ -7,7 +13,10 @@ const {
   OperacionNoPermitida
 } = require('../../dominio/errores/errores');
 const { agregarEventoOutbox } = require('./outbox');
-const { crearPoliticaCancelacionesDesdeEntorno } = require('../../dominio/politica-cancelaciones');
+const {
+  crearPoliticaCancelacionesDesdeEntorno,
+  bloqueoEstaActivo
+} = require('../../dominio/politica-cancelaciones');
 
 const SQL_CAMPOS_VIAJE = 'id, pasajero_id, conductor_id, origen, destino, fecha_programada, estado, creado_en, actualizado_en';
 
@@ -55,11 +64,42 @@ async function bloquearFilaLimite(cliente, usuarioId) {
 }
 
 function verificarBloqueoActivo(fila) {
-  if (fila?.bloqueado_hasta && new Date(fila.bloqueado_hasta).getTime() > Date.now()) {
+  if (bloqueoEstaActivo(fila?.bloqueado_hasta)) {
     throw new ConflictoDeEstado(
       `Usuario bloqueado para nuevas operaciones hasta ${new Date(fila.bloqueado_hasta).toISOString()}`
     );
   }
+}
+
+async function bloquearSiExcedeLimite(cliente, {
+  actorId,
+  decision,
+  filaLimite,
+  politicaCancelaciones
+}) {
+  if (!decision.cuentaParaLimite ||
+      bloqueoEstaActivo(filaLimite?.bloqueado_hasta)) return null;
+
+  const resultado = await cliente.query(
+    `SELECT COUNT(*)::integer AS cantidad
+       FROM historial_estados_viaje
+      WHERE actor_id = $1
+        AND estado = ANY($2::varchar[])
+        AND ocurrido_en > NOW() - ($3 * INTERVAL '1 millisecond')`,
+    [actorId, ESTADOS_CANCELACION_CONTABILIZADOS, politicaCancelaciones.periodoCancelacionesMs]
+  );
+  if (resultado.rows[0].cantidad < politicaCancelaciones.limiteCancelaciones) return null;
+
+  const bloqueadoHasta = new Date(Date.now() + politicaCancelaciones.bloqueoCancelacionesMs);
+  await cliente.query(
+    `UPDATE bloqueos_cancelacion
+        SET bloqueado_hasta = $2,
+            motivo = 'Límite de cancelaciones excedido',
+            actualizado_en = NOW()
+      WHERE usuario_id = $1`,
+    [actorId, bloqueadoHasta]
+  );
+  return bloqueadoHasta;
 }
 
 async function guardarIdempotenciaTransaccional(cliente, idempotencia, respuesta) {
@@ -186,11 +226,8 @@ class RepositorioViajesPostgres extends RepositorioViajes {
       [id]
     );
     const viaje = convertirFila(resultado.rows[0]);
-    if (viaje && [
-      ESTADOS.CANCELADO_PASAJERO,
-      ESTADOS.CANCELADO_CHOFER,
-      ESTADOS.CANCELADO_OPERADOR
-    ].includes(viaje.estado)) {
+    const tipoActor = TIPO_ACTOR_POR_ESTADO_CANCELACION[viaje?.estado];
+    if (viaje && tipoActor) {
       const historial = await this.pool.query(
         `SELECT actor_id, motivo, estado_previo, penalidad_ars, ocurrido_en
            FROM historial_estados_viaje
@@ -202,11 +239,7 @@ class RepositorioViajesPostgres extends RepositorioViajes {
       if (historial.rows[0]) {
         const cancelacion = historial.rows[0];
         viaje.cancelacion = {
-          actorTipo: {
-            [ESTADOS.CANCELADO_PASAJERO]: 'PASAJERO',
-            [ESTADOS.CANCELADO_CHOFER]: 'CHOFER',
-            [ESTADOS.CANCELADO_OPERADOR]: 'OPERADOR'
-          }[viaje.estado],
+          actorTipo: tipoActor,
           actorId: cancelacion.actor_id,
           estadoAnterior: cancelacion.estado_previo,
           penalidadArs: cancelacion.penalidad_ars,
@@ -263,8 +296,6 @@ class RepositorioViajesPostgres extends RepositorioViajes {
     politicaCancelaciones = this.politicaCancelaciones
   }) {
     const actorId = actor.identificador;
-    const operadorAutorizado = actor.roles?.includes('operador') &&
-      actor.permisos?.includes('trips:cancel');
     const resultado = await ejecutarEnTransaccion(this.pool, async (cliente) => {
       const filaLimite = await bloquearFilaLimite(cliente, actorId);
       const bloqueado = await cliente.query(
@@ -276,33 +307,13 @@ class RepositorioViajesPostgres extends RepositorioViajes {
       if (respuestaIdempotente) return { respuestaIdempotente };
       const actual = convertirFila(bloqueado.rows[0]);
       const decision = politicaCancelaciones.resolver({ viaje: actual, actor });
-
-      const bloqueoActivo = !operadorAutorizado &&
-        filaLimite?.bloqueado_hasta &&
-        new Date(filaLimite.bloqueado_hasta).getTime() > Date.now();
-      if (decision.cuentaParaLimite) {
-        const conteo = await cliente.query(
-          `SELECT COUNT(*)::integer AS cantidad
-             FROM historial_estados_viaje
-            WHERE actor_id = $1
-              AND estado IN ('CANCELLED_BY_PASSENGER', 'CANCELLED_BY_DRIVER')
-              AND ocurrido_en > NOW() - ($2 * INTERVAL '1 millisecond')`,
-          [actorId, politicaCancelaciones.periodoCancelacionesMs]
-        );
-        if (!bloqueoActivo &&
-            conteo.rows[0].cantidad >= politicaCancelaciones.limiteCancelaciones) {
-          const bloqueadoHasta = new Date(Date.now() + politicaCancelaciones.bloqueoCancelacionesMs);
-          await cliente.query(
-            `UPDATE bloqueos_cancelacion
-                SET bloqueado_hasta = $2,
-                    motivo = 'Límite de cancelaciones excedido',
-                    actualizado_en = NOW()
-              WHERE usuario_id = $1`,
-            [actorId, bloqueadoHasta]
-          );
-          return { bloqueadoHasta };
-        }
-      }
+      const bloqueadoHasta = await bloquearSiExcedeLimite(cliente, {
+        actorId,
+        decision,
+        filaLimite,
+        politicaCancelaciones
+      });
+      if (bloqueadoHasta) return { bloqueadoHasta };
 
       const actualizado = await cliente.query(
         `UPDATE viajes
@@ -480,7 +491,7 @@ class RepositorioViajesPostgres extends RepositorioViajes {
       `SELECT ${SQL_CAMPOS_VIAJE} FROM viajes
        WHERE estado = ANY($1::varchar[])
        ORDER BY actualizado_en DESC`,
-      [['ASSIGNED', 'DRIVER_ARRIVING', 'IN_PROGRESS']]
+      [ESTADOS_VIAJE_ACTIVO]
     );
     return resultado.rows.map(convertirFila);
   }

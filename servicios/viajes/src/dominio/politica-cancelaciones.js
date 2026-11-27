@@ -26,6 +26,12 @@ const ESTADOS_OPERADOR = [
   ESTADOS.EN_CURSO
 ];
 
+function bloqueoEstaActivo(bloqueadoHasta, ahora = Date.now()) {
+  if (bloqueadoHasta === null || bloqueadoHasta === undefined) return false;
+  const timestamp = new Date(bloqueadoHasta).getTime();
+  return Number.isFinite(timestamp) && timestamp > ahora;
+}
+
 class PoliticaCancelaciones {
   constructor({
     penalidadPasajeroAlLlegarArs = 1000,
@@ -123,5 +129,6 @@ function crearPoliticaCancelacionesDesdeEntorno(entorno = process.env) {
 
 module.exports = {
   PoliticaCancelaciones,
-  crearPoliticaCancelacionesDesdeEntorno
+  crearPoliticaCancelacionesDesdeEntorno,
+  bloqueoEstaActivo
 };

@@ -4,8 +4,14 @@ const {
   OperacionNoPermitida,
   ConflictoDeEstado
 } = require('../../dominio/errores/errores');
-const { ESTADOS } = require('../../dominio/entidades/viaje');
-const { crearPoliticaCancelacionesDesdeEntorno } = require('../../dominio/politica-cancelaciones');
+const {
+  ESTADOS,
+  ESTADOS_VIAJE_ACTIVO
+} = require('../../dominio/entidades/viaje');
+const {
+  crearPoliticaCancelacionesDesdeEntorno,
+  bloqueoEstaActivo
+} = require('../../dominio/politica-cancelaciones');
 
 class RepositorioViajesMemoria extends RepositorioViajes {
   constructor({ politicaCancelaciones = crearPoliticaCancelacionesDesdeEntorno() } = {}) {
@@ -34,7 +40,7 @@ class RepositorioViajesMemoria extends RepositorioViajes {
     if (!viaje) throw new RecursoNoEncontrado();
     const ocupado = [...this.viajes.values()].some((otro) =>
       otro.conductorId === conductorId &&
-      [ESTADOS.ASIGNADO, ESTADOS.EN_ORIGEN, ESTADOS.EN_CURSO].includes(otro.estado)
+      ESTADOS_VIAJE_ACTIVO.includes(otro.estado)
     );
     if (ocupado) {
       throw new ConflictoDeEstado('El conductor ya tiene un viaje activo');
@@ -45,7 +51,7 @@ class RepositorioViajesMemoria extends RepositorioViajes {
 
   verificarSinBloqueoCancelaciones(usuarioId) {
     const bloqueadoHasta = this.bloqueosCancelacion.get(usuarioId);
-    if (bloqueadoHasta && bloqueadoHasta > Date.now()) {
+    if (bloqueoEstaActivo(bloqueadoHasta)) {
       throw new ConflictoDeEstado(
         `Usuario bloqueado para nuevas operaciones hasta ${new Date(bloqueadoHasta).toISOString()}`
       );
@@ -64,8 +70,7 @@ class RepositorioViajesMemoria extends RepositorioViajes {
     const decision = politicaCancelaciones.resolver({ viaje, actor });
     const ahora = Date.now();
     const bloqueadoHasta = this.bloqueosCancelacion.get(actorId);
-    if (decision.cuentaParaLimite &&
-        (!bloqueadoHasta || bloqueadoHasta <= ahora)) {
+    if (decision.cuentaParaLimite && !bloqueoEstaActivo(bloqueadoHasta, ahora)) {
       const cancelaciones = (this.cancelacionesPorUsuario.get(actorId) || [])
         .filter((timestamp) => timestamp > ahora - politicaCancelaciones.periodoCancelacionesMs);
       if (cancelaciones.length >= politicaCancelaciones.limiteCancelaciones) {

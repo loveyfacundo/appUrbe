@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import Field from '../../components/Field.jsx';
 import { Detail } from '../../components/trips/TripComponents.jsx';
 import { request } from '../../services/api.js';
-import { DESTINATION, ORIGIN, statusLabel } from '../../utils/trips.js';
+import { statusLabel } from '../../utils/trips.js';
 
 export default function DriverPage({ session, notify, driverStatus, setDriverStatus, driverTrip, setDriverTrip, loadDriverStatus }) {
   const [busy, setBusy] = useState(false);
@@ -41,8 +41,14 @@ export default function DriverPage({ session, notify, driverStatus, setDriverSta
       };
     }
     let progress = 0;
-    const origin = driverTrip.origin || ORIGIN;
-    const destination = driverTrip.destination || DESTINATION;
+    const origin = driverTrip.origin;
+    const destination = driverTrip.destination;
+    if (!origin || !destination) {
+      setSharing(false);
+      setLocationMode('');
+      notify('El viaje no contiene coordenadas para simular la ubicación.', 'error');
+      return undefined;
+    }
     const sendPoint = async () => {
       const latitude = origin.latitude + (destination.latitude - origin.latitude) * progress;
       const longitude = origin.longitude + (destination.longitude - origin.longitude) * progress;

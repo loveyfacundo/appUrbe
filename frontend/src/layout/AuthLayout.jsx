@@ -10,13 +10,6 @@ export default function AuthLayout({ title, subtitle, children }) {
           <h1>Tu ciudad,<br />en movimiento.</h1>
           <p>Un viaje más simple empieza acá. Cotizá, encontrá tu chofer y seguí cada tramo en tiempo real.</p>
         </div>
-        <div className="intro-route" aria-hidden="true">
-          <span className="route-node" />
-          <span className="route-line" />
-          <span className="route-node route-node-end" />
-          <span className="route-label route-label-start">OBELISCO</span>
-          <span className="route-label route-label-end">PALERMO</span>
-        </div>
         <div className="intro-footer"><span>BUENOS AIRES, ARGENTINA</span><span>APPURBE · 2026</span></div>
       </section>
       <section className="auth-panel">

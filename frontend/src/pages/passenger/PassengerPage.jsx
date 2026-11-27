@@ -2,15 +2,15 @@ import { useState } from 'react';
 import Field from '../../components/Field.jsx';
 import { CopyButton, Guidance, LocationField, TripCard } from '../../components/trips/TripComponents.jsx';
 import { request } from '../../services/api.js';
-import { dateLabel, DESTINATION, money, ORIGIN } from '../../utils/trips.js';
+import { dateLabel, EMPTY_LOCATION, money } from '../../utils/trips.js';
 
 export default function PassengerPage({ session, notify, trip, setTrip, setActiveTrip, loadTrip, quote, setQuote }) {
-  const [origin, setOrigin] = useState(ORIGIN);
-  const [destination, setDestination] = useState(DESTINATION);
+  const [origin, setOrigin] = useState({ ...EMPTY_LOCATION });
+  const [destination, setDestination] = useState({ ...EMPTY_LOCATION });
   const [busy, setBusy] = useState(false);
 
   function updatePoint(setPoint, key, value) {
-    setPoint((current) => ({ ...current, [key]: key === 'address' ? value : Number(value) }));
+    setPoint((current) => ({ ...current, [key]: value }));
     setQuote(null);
   }
 
@@ -19,9 +19,18 @@ export default function PassengerPage({ session, notify, trip, setTrip, setActiv
     setBusy(true);
     try {
       const estimate = await request('/api/v1/tarifas/estimacion', {
-        method: 'POST', token: session.accessToken, body: { origin, destination }
+        method: 'POST',
+        token: session.accessToken,
+        body: {
+          origin: { ...origin, latitude: Number(origin.latitude), longitude: Number(origin.longitude) },
+          destination: { ...destination, latitude: Number(destination.latitude), longitude: Number(destination.longitude) }
+        }
       });
-      setQuote({ ...estimate, origin, destination });
+      setQuote({
+        ...estimate,
+        origin: { ...origin, latitude: Number(origin.latitude), longitude: Number(origin.longitude) },
+        destination: { ...destination, latitude: Number(destination.latitude), longitude: Number(destination.longitude) }
+      });
       notify('Estimación calculada correctamente.');
     } catch (error) {
       notify(error.message, 'error');

@@ -1,5 +1,4 @@
-export const ORIGIN = { latitude: -34.6037, longitude: -58.3816, address: 'Obelisco, CABA' };
-export const DESTINATION = { latitude: -34.6158, longitude: -58.4333, address: 'Palermo, CABA' };
+export const EMPTY_LOCATION = { latitude: '', longitude: '', address: '' };
 export const TRIP_STEPS = [
   ['REQUESTED', 'Solicitado'],
   ['ASSIGNED', 'Chofer asignado'],

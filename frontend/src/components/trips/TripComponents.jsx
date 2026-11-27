@@ -1,4 +1,4 @@
-import { TRIP_STEPS, ORIGIN, DESTINATION, dateLabel, statusLabel, statusTone } from '../../utils/trips.js';
+import { TRIP_STEPS, dateLabel, statusLabel, statusTone } from '../../utils/trips.js';
 
 export function LocationField({ type, label, point, onChange }) {
   return <div className="location-field">
@@ -16,9 +16,15 @@ export function LocationField({ type, label, point, onChange }) {
 export function TripCard({ trip }) {
   return <article className="card trip-card">
     <div className="map-top"><div><h2 className="card-title">Tu recorrido</h2><p className="card-subtitle">{trip ? trip.driverId ? 'Seguimos el viaje mientras avanza.' : 'El chofer todavía no fue asignado.' : 'El mapa se activa cuando confirmás el viaje.'}</p></div><span className={`status-badge${trip ? ` status-${statusTone(trip.status)}` : ''}`}>{trip ? statusLabel(trip.status) : 'Sin viaje activo'}</span></div>
-    <div className="map-canvas"><SchematicMap trip={trip} /></div>
-    <div className="map-legend"><span className="legend-item"><i className="legend-swatch" />Origen</span><span className="legend-item"><i className="legend-swatch legend-swatch-end" />Destino</span>{trip?.driverId && <span className="legend-item"><i className="legend-swatch legend-swatch-driver" />Chofer</span>}</div>
-    <p className="schematic-note">Vista esquemática; no es una ruta vial ni un mapa cartográfico.</p>
+    {trip ? <>
+      <div className="map-canvas"><SchematicMap trip={trip} /></div>
+      <div className="map-legend"><span className="legend-item"><i className="legend-swatch" />Origen</span><span className="legend-item"><i className="legend-swatch legend-swatch-end" />Destino</span>{trip.driverId && <span className="legend-item"><i className="legend-swatch legend-swatch-driver" />Chofer</span>}</div>
+      <p className="schematic-note">Vista esquemática; no es una ruta vial ni un mapa cartográfico.</p>
+    </> : <div className="map-empty">
+      <span className="empty-icon">⌖</span>
+      <strong>El recorrido aparecerá al solicitar un viaje</strong>
+      <p>Ingresá el origen y destino para ver el trayecto.</p>
+    </div>}
     {trip ? <div className="trip-summary">
       <div className="trip-summary-top"><code className="trip-id">{trip.id}</code><span className="trip-time">{dateLabel(trip.updatedAt)}</span></div>
       <div className="timeline" aria-label="Progreso del viaje">{TRIP_STEPS.map(([status, label], index) => {
@@ -33,8 +39,8 @@ export function TripCard({ trip }) {
 }
 
 function SchematicMap({ trip }) {
-  const origin = trip?.origin || ORIGIN;
-  const destination = trip?.destination || DESTINATION;
+  const origin = trip.origin;
+  const destination = trip.destination;
   const minLat = Math.min(origin.latitude, destination.latitude) - .008;
   const maxLat = Math.max(origin.latitude, destination.latitude) + .008;
   const minLon = Math.min(origin.longitude, destination.longitude) - .01;
@@ -58,7 +64,7 @@ function SchematicMap({ trip }) {
       {driver && <><circle className="map-driver-pulse" cx={driver.x} cy={driver.y} r="19" /><circle className="map-marker-driver" cx={driver.x} cy={driver.y} r="9" /></>}
     </svg>
     <span className="map-label map-label-origin">{origin.address || 'Origen'}</span><span className="map-label map-label-destination">{destination.address || 'Destino'}</span>
-    <span className="map-status"><i className="live-dot" />{driver ? 'Posición actualizada' : trip ? 'Esperando posición del chofer' : 'Recorrido de ejemplo'}</span>
+    <span className="map-status"><i className="live-dot" />{driver ? 'Posición actualizada' : 'Esperando posición del chofer'}</span>
   </>;
 }
 
@@ -87,4 +93,3 @@ export function CopyButton({ value, notify }) {
     }
   }}>Copiar ID</button>;
 }
-

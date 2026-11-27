@@ -1,4 +1,12 @@
-FROM node:22-bookworm-slim
+FROM node:22-bookworm-slim AS frontend-build
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY frontend ./frontend
+RUN npm run build
+
+FROM node:22-bookworm-slim AS runtime
 
 WORKDIR /app
 
@@ -10,6 +18,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 COPY index.js ./
+COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 COPY observabilidad ./observabilidad
 COPY contratos ./contratos
 COPY servicios ./servicios

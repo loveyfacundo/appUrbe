@@ -1,15 +1,18 @@
 const { iniciarTelemetria } = require('./observabilidad/opentelemetry');
 const cerrarTelemetria = iniciarTelemetria();
+const express = require('express');
+const path = require('node:path');
 const { crearServidor } = require('./servicios/viajes/src/servidor');
 const {
     RETENCION_UBICACION_MS
 } = require('./servicios/conductores/src/politica-ubicaciones');
 const app = crearServidor();
+app.use(express.static(path.join(__dirname, 'frontend', 'dist')));
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 
-app.get('/', (req, res) => res.send('Bienvenido a Urbe, la mejor plataforma de viajes'));
+app.get('/', (req, res) => res.status(503).send('El frontend no está compilado. Ejecutá npm run build.'));
 
 let servidor;
 let limpiezaUbicaciones;

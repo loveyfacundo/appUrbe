@@ -413,4 +413,8 @@ function convertirUbicacion(fila) {
   };
 }
 
-module.exports = { RepositorioFlotaMemoria, RepositorioFlotaPostgres };
+module.exports = {
+  RepositorioFlotaMemoria,
+  RepositorioFlotaPostgres,
+  calcularDistanciaMetros
+};

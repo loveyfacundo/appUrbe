@@ -24,15 +24,16 @@ function crearServidor({
   secret = process.env.JWT_SECRET,
   identityBootstrapToken = process.env.IDENTITY_BOOTSTRAP_TOKEN,
   intervaloSeguimientoMs = 1000,
-  verificadorPostgres
+  verificadorPostgres,
+  repositorioFlota: repositorioFlotaInyectado
 } = {}) {
   const moduloReal = modulo || crearModuloViajes();
   const verificadorReal = verificadorPostgres ||
     crearVerificadorPostgres({ pool: moduloReal.pool || undefined });
   const app = express();
-  const repositorioFlota = moduloReal.pool
+  const repositorioFlota = repositorioFlotaInyectado || (moduloReal.pool
     ? new RepositorioFlotaPostgres({ pool: moduloReal.pool })
-    : new RepositorioFlotaMemoria();
+    : new RepositorioFlotaMemoria());
   const servicioFlota = new ServicioFlota({ repositorio: repositorioFlota });
   const consultarSeguimiento = new ConsultarSeguimientoViaje({
     repositorioViajes: moduloReal.repositorio,

@@ -10,6 +10,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 COPY index.js ./
+COPY observabilidad ./observabilidad
 COPY contratos ./contratos
 COPY servicios ./servicios
 COPY infraestructura/postgres/migrations ./infraestructura/postgres/migrations
